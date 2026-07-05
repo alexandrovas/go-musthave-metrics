@@ -16,7 +16,7 @@ import (
 
 const storageLogInterval = 5 * time.Second
 
-func Run(cfg *config.Config) error {
+func Run(cfg *config.ServerConfig) error {
 	repo := repository.NewMemStorage()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -45,7 +45,7 @@ func Run(cfg *config.Config) error {
 	}()
 
 	srv := &http.Server{
-		Addr:    cfg.Server.Address,
+		Addr:    cfg.Address,
 		Handler: handlerHttp.NewRouter(repo),
 	}
 
@@ -56,7 +56,7 @@ func Run(cfg *config.Config) error {
 		}
 	}()
 
-	slog.Info("starting server", "address", cfg.Server.Address)
+	slog.Info("starting server", "address", cfg.Address)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

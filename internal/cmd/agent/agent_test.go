@@ -26,15 +26,15 @@ var allGaugeNames = []string{
 
 func TestMetricsStorePoll(t *testing.T) {
 	t.Run("all gauges set after one poll", func(t *testing.T) {
-		s := &metricsStore{
+		c := &collector{
 			counters: make(map[string]int64),
 			gauges:   make(map[string]float64),
 		}
-		s.poll()
-		s.Lock()
-		defer s.Unlock()
+		c.poll()
+		c.Lock()
+		defer c.Unlock()
 		for _, name := range allGaugeNames {
-			_, ok := s.gauges[name]
+			_, ok := c.gauges[name]
 			assert.True(t, ok, "gauge %q not set after poll", name)
 		}
 	})
@@ -49,7 +49,7 @@ func TestMetricsStorePoll(t *testing.T) {
 	}
 	for _, tc := range pollCountTests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &metricsStore{counters: make(map[string]int64), gauges: make(map[string]float64)}
+			s := &collector{counters: make(map[string]int64), gauges: make(map[string]float64)}
 			for range tc.polls {
 				s.poll()
 			}
@@ -81,7 +81,9 @@ func TestSendMetric(t *testing.T) {
 
 			host := strings.TrimPrefix(srv.URL, "http://")
 			a := &agent{
-				cfg:        &config.Config{Server: config.ServerConfig{Address: host}},
+				cfg: &config.AgentConfig{
+					ServerAddress: host,
+				},
 				httpClient: srv.Client(),
 			}
 			err := a.sendMetric(t.Context(), "X", "gauge", "1")
@@ -97,11 +99,11 @@ func TestSendMetric(t *testing.T) {
 func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[string]int64, gauges map[string]float64, client *http.Client) *agent {
 	t.Helper()
 	return &agent{
-		cfg: &config.Config{
-			Server: config.ServerConfig{Address: host},
-			Agent:  config.AgentConfig{Workers: numWorkers},
+		cfg: &config.AgentConfig{
+			ServerAddress: host,
+			Workers:       numWorkers,
 		},
-		metrics:    &metricsStore{counters: counters, gauges: gauges},
+		collector:  &collector{counters: counters, gauges: gauges},
 		httpClient: client,
 		jobs:       make(chan metricValue, 64),
 	}

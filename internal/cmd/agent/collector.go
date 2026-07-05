@@ -9,7 +9,7 @@ import (
 	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
 )
 
-type metricsStore struct {
+type collector struct {
 	counters map[string]int64
 	gauges   map[string]float64
 	sync.Mutex
@@ -21,7 +21,7 @@ type metricValue struct {
 	mtype models.MetricType
 }
 
-func (s *metricsStore) poll() {
+func (s *collector) poll() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -58,29 +58,26 @@ func (s *metricsStore) poll() {
 	s.Unlock()
 }
 
-func (s *metricsStore) readValues() []metricValue {
-	values := make([]metricValue, len(s.counters)+len(s.gauges))
-
-	i := 0
+func (s *collector) collect() []metricValue {
 	s.Lock()
+	defer s.Unlock()
+
+	values := make([]metricValue, 0, len(s.gauges)+len(s.counters))
 	for name, value := range s.gauges {
-		values[i] = metricValue{
+		values = append(values, metricValue{
 			name:  name,
 			value: strconv.FormatFloat(value, 'f', -1, 64),
 			mtype: models.Gauge,
-		}
-		i++
+		})
 	}
 	for name, value := range s.counters {
-		values[i] = metricValue{
+		values = append(values, metricValue{
 			name:  name,
 			value: strconv.FormatInt(value, 10),
 			mtype: models.Counter,
-		}
-		i++
+		})
 	}
-	// reset poll count
+	// reset counters
 	s.counters["PollCount"] = 0
-	s.Unlock()
 	return values
 }

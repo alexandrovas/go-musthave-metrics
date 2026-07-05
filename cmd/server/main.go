@@ -38,7 +38,7 @@ var (
 		Use:   "musthave-metrics-server",
 		Short: "musthave-metrics is metrics storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(configFile, cmd.Flags())
+			cfg, err := config.LoadServerConfig(configFile, cmd.Flags())
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
@@ -54,14 +54,16 @@ var (
 	configFile string
 )
 
-func init() {
+func flags() {
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
-	rootCmd.PersistentFlags().StringP("server.address", "l", ":8080", "server address")
+	rootCmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server listen address")
 	rootCmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
 }
 
 func main() {
+	flags()
+
 	if err := rootCmd.Execute(); err != nil {
 		slog.Error(err.Error())
 		os.Exit(2)

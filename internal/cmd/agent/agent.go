@@ -14,33 +14,28 @@ import (
 )
 
 type agent struct {
-	cfg        *config.Config
-	metrics    *metricsStore
+	cfg        *config.AgentConfig
+	collector  *collector
 	httpClient *http.Client
 	jobs       chan metricValue
 }
 
-func Run(cfg *config.Config) error {
+func Run(cfg *config.AgentConfig) error {
 	ctx := context.Background()
-
-	workers := cfg.Agent.Workers
-	if workers <= 0 {
-		workers = 1
-	}
 
 	agent := &agent{
 		cfg: cfg,
-		metrics: &metricsStore{
+		collector: &collector{
 			counters: make(map[string]int64),
 			gauges:   make(map[string]float64),
 		},
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs: make(chan metricValue, workers*10),
+		jobs: make(chan metricValue, cfg.Workers*10),
 	}
 
-	slog.Info("Agent is running", "server", cfg.Server.Address, "workers", workers)
+	slog.Info("Agent is running", "server", cfg.ServerAddress, "workers", cfg.Workers)
 
 	ctx, cancel := context.WithCancel(ctx)
 	// handle Ctrl+C
@@ -61,7 +56,7 @@ func Run(cfg *config.Config) error {
 	})
 
 	// run multiple workers to push metrics
-	for idx := range workers {
+	for idx := range cfg.Workers {
 		wg.Go(func() {
 			agent.runWorker(ctx, idx)
 		})
@@ -83,8 +78,8 @@ func Run(cfg *config.Config) error {
 }
 
 func (a *agent) runReporting(ctx context.Context) {
-	timer := time.NewTicker(a.cfg.Agent.ReportInterval)
-	slog.Debug("Reporting process started...", "interval", a.cfg.Agent.ReportInterval)
+	timer := time.NewTicker(a.cfg.ReportInterval)
+	slog.Debug("Reporting process started...", "interval", a.cfg.ReportInterval)
 	for {
 		select {
 		case <-timer.C:
@@ -100,12 +95,12 @@ func (a *agent) runReporting(ctx context.Context) {
 }
 
 func (a *agent) runPolling(ctx context.Context) {
-	timer := time.NewTicker(a.cfg.Agent.PollInterval)
-	slog.Debug("Polling process started...", "interval", a.cfg.Agent.PollInterval)
+	timer := time.NewTicker(a.cfg.PollInterval)
+	slog.Debug("Polling process started...", "interval", a.cfg.PollInterval)
 	for {
 		select {
 		case <-timer.C:
-			a.metrics.poll()
+			a.collector.poll()
 			slog.Debug("Metrics successfully polled")
 
 		case <-ctx.Done():
@@ -134,7 +129,7 @@ func (a *agent) runWorker(ctx context.Context, idx uint16) {
 }
 
 func (a *agent) report(ctx context.Context) {
-	for _, m := range a.metrics.readValues() {
+	for _, m := range a.collector.collect() {
 		select {
 		case a.jobs <- m:
 		case <-ctx.Done():
@@ -144,7 +139,7 @@ func (a *agent) report(ctx context.Context) {
 }
 
 func (a *agent) sendMetric(ctx context.Context, name, mtype, value string) error {
-	url := fmt.Sprintf("http://%s/update/%s/%s/%s", a.cfg.Server.Address, mtype, name, value)
+	url := fmt.Sprintf("http://%s/update/%s/%s/%s", a.cfg.ServerAddress, mtype, name, value)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {

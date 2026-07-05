@@ -38,7 +38,7 @@ var (
 		Use:   "musthave-metrics-agent",
 		Short: "musthave-metrics is metrics storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(configFile, cmd.Flags())
+			cfg, err := config.LoadAgentConfig(configFile, cmd.Flags())
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
@@ -54,17 +54,19 @@ var (
 	configFile string
 )
 
-func init() {
+func flags() {
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
-	rootCmd.PersistentFlags().StringP("server.address", "s", "127.0.0.1:8080", "server address")
-	rootCmd.PersistentFlags().DurationP("agent.poll_interval", "p", 2*time.Second, "Metrics poll interval")
-	rootCmd.PersistentFlags().DurationP("agent.report_interval", "r", 10*time.Second, "Metrics report interval")
-	rootCmd.PersistentFlags().Uint16P("agent.workers", "w", 5, "Workers count")
+	rootCmd.PersistentFlags().StringP("server_address", "a", "localhost:8080", "server address")
+	rootCmd.PersistentFlags().VarP(newDurationValue(2*time.Second), "poll_interval", "p", "Metrics poll interval (e.g. 2s or 2)")
+	rootCmd.PersistentFlags().VarP(newDurationValue(10*time.Second), "report_interval", "r", "Metrics report interval (e.g. 10s or 10)")
+	rootCmd.PersistentFlags().Uint16P("workers", "w", 5, "Workers count")
 	rootCmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
 }
 
 func main() {
+	flags()
+
 	if err := rootCmd.Execute(); err != nil {
 		slog.Error(err.Error())
 		os.Exit(2)
