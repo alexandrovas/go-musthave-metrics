@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env/v2"
@@ -25,11 +26,18 @@ const (
 
 type Config struct {
 	Server ServerConfig `koanf:"server"`
+	Agent  AgentConfig  `koanf:"agent"`
 	Log    LogConfig    `koanf:"log"`
 }
 
 type ServerConfig struct {
 	Address string `koanf:"address"`
+}
+
+type AgentConfig struct {
+	PollInterval   time.Duration `koanf:"poll_interval"`
+	ReportInterval time.Duration `koanf:"report_interval"`
+	Workers        uint16        `koanf:"workers"`
 }
 
 type LogConfig struct {

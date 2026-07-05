@@ -3,25 +3,13 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/cmd/server"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
-	"github.com/alexandrovas/go-musthave-metrics/internal/router"
 )
-
-func server(cfg *config.Config) error {
-	r := router.NewRouter()
-
-	slog.Info("starting server", "address", cfg.Server.Address)
-	if err := http.ListenAndServe(cfg.Server.Address, r); err != nil {
-		slog.Error("server stopped", "error", err)
-		return err
-	}
-	return nil
-}
 
 func setupLogger(level string, format string) error {
 	var l slog.Level
@@ -47,7 +35,7 @@ func setupLogger(level string, format string) error {
 
 var (
 	rootCmd = &cobra.Command{
-		Use:   "musthave-metrics",
+		Use:   "musthave-metrics-server",
 		Short: "musthave-metrics is metrics storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configFile, cmd.Flags())
@@ -57,7 +45,7 @@ var (
 			if err := setupLogger(cfg.Log.Level, string(cfg.Log.Format)); err != nil {
 				return fmt.Errorf("setup logger: %w", err)
 			}
-			if err := server(cfg); err != nil {
+			if err := server.Run(cfg); err != nil {
 				return err
 			}
 			return nil
