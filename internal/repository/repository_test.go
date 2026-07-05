@@ -5,13 +5,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
 )
 
-func ptr[T any](v T) *T { return &v }
-
-func TestMemStorageUpdateGauge(t *testing.T) {
+func TestMemStorageGauge(t *testing.T) {
 	tests := []struct {
 		name   string
 		values []float64
@@ -26,18 +22,22 @@ func TestMemStorageUpdateGauge(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewMemStorage()
 			for _, v := range tc.values {
-				require.NoError(t, s.Update(models.Metrics{
-					ID:    "Alloc",
-					MType: models.Gauge,
-					Value: ptr(v),
-				}))
+				s.SetGauge("Alloc", v)
 			}
-			assert.Equal(t, tc.want, s.gauges["Alloc"])
+			got, ok := s.GetGauge("Alloc")
+			require.True(t, ok)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
 
-func TestMemStorageUpdateCounter(t *testing.T) {
+func TestMemStorageGaugeNotFound(t *testing.T) {
+	s := NewMemStorage()
+	_, ok := s.GetGauge("NonExistent")
+	assert.False(t, ok)
+}
+
+func TestMemStorageCounter(t *testing.T) {
 	tests := []struct {
 		name   string
 		deltas []int64
@@ -52,27 +52,44 @@ func TestMemStorageUpdateCounter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewMemStorage()
 			for _, d := range tc.deltas {
-				require.NoError(t, s.Update(models.Metrics{
-					ID:    "PollCount",
-					MType: models.Counter,
-					Delta: ptr(d),
-				}))
+				s.AddCounter("PollCount", d)
 			}
-			assert.Equal(t, tc.want, s.counters["PollCount"])
+			got, ok := s.GetCounter("PollCount")
+			require.True(t, ok)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
 
-func TestMemStorageMultipleMetrics(t *testing.T) {
+func TestMemStorageCounterNotFound(t *testing.T) {
 	s := NewMemStorage()
+	_, ok := s.GetCounter("NonExistent")
+	assert.False(t, ok)
+}
 
-	require.NoError(t, s.Update(models.Metrics{ID: "Alloc", MType: models.Gauge, Value: ptr(1024.0)}))
-	require.NoError(t, s.Update(models.Metrics{ID: "Sys", MType: models.Gauge, Value: ptr(4096.0)}))
-	require.NoError(t, s.Update(models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(7))}))
+func TestMemStorageAll(t *testing.T) {
+	s := NewMemStorage()
+	s.SetGauge("Alloc", 1024)
+	s.SetGauge("Sys", 4096)
+	s.AddCounter("PollCount", 7)
 
-	assert.Equal(t, 1024.0, s.gauges["Alloc"])
-	assert.Equal(t, 4096.0, s.gauges["Sys"])
-	assert.Equal(t, int64(7), s.counters["PollCount"])
-	assert.Len(t, s.gauges, 2)
-	assert.Len(t, s.counters, 1)
+	gauges := s.Gauges()
+	assert.Equal(t, 1024.0, gauges["Alloc"])
+	assert.Equal(t, 4096.0, gauges["Sys"])
+	assert.Len(t, gauges, 2)
+
+	counters := s.Counters()
+	assert.Equal(t, int64(7), counters["PollCount"])
+	assert.Len(t, counters, 1)
+}
+
+func TestMemStorageGaugesCopy(t *testing.T) {
+	s := NewMemStorage()
+	s.SetGauge("X", 1)
+
+	cp := s.Gauges()
+	cp["X"] = 999 // изменяем копию
+
+	got, _ := s.GetGauge("X")
+	assert.Equal(t, 1.0, got, "modifying copy must not affect storage")
 }

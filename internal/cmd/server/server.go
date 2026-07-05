@@ -30,6 +30,7 @@ func Run(cfg *config.Config) error {
 		cancel()
 	}()
 
+	// печатаем в консоль текущее состояние хранилища (для дебага)
 	go func() {
 		ticker := time.NewTicker(storageLogInterval)
 		defer ticker.Stop()

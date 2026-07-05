@@ -26,7 +26,10 @@ var allGaugeNames = []string{
 
 func TestMetricsStorePoll(t *testing.T) {
 	t.Run("all gauges set after one poll", func(t *testing.T) {
-		s := &metricsStore{counters: make(map[string]int64), gauges: make(map[string]float64)}
+		s := &metricsStore{
+			counters: make(map[string]int64),
+			gauges:   make(map[string]float64),
+		}
 		s.poll()
 		s.Lock()
 		defer s.Unlock()
