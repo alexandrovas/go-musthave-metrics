@@ -12,8 +12,10 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 )
 
-var (
-	rootCmd = &cobra.Command{
+func cmd() *cobra.Command {
+	var configFile string
+
+	cmd := &cobra.Command{
 		Use:   "musthave-metrics-server",
 		Short: "musthave-metrics is metrics storage",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,20 +32,19 @@ var (
 			return nil
 		},
 	}
-	configFile string
-)
 
-func flags() {
-	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
-	rootCmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server listen address")
-	rootCmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
-	rootCmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
+	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
+	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server listen address")
+	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
+	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
+
+	return cmd
 }
 
 func main() {
-	flags()
+	cmd := cmd()
 
-	if err := rootCmd.Execute(); err != nil {
+	if err := cmd.Execute(); err != nil {
 		slog.Error(err.Error())
 		os.Exit(2)
 	}
