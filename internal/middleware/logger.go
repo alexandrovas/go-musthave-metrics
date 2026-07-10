@@ -25,11 +25,20 @@ func Logger(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rw, r)
 
-		slog.Info("request",
+		msg := "request"
+		log := slog.With(
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,
-			"duration", time.Since(start),
-		)
+			"duration", time.Since(start))
+
+		switch {
+		case rw.status >= 400 && rw.status < 500:
+			log.Debug(msg)
+		case rw.status >= 500:
+			log.Error(msg)
+		default:
+			log.Info(msg)
+		}
 	})
 }
