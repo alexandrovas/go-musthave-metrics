@@ -37,23 +37,10 @@ func Run(cfg *config.AgentConfig) error {
 
 	slog.Info("Agent is running", "server", cfg.ServerAddress, "workers", cfg.Workers)
 
-	ctx, cancel := context.WithCancel(ctx)
-	// handle Ctrl+C
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	defer func() {
-		signal.Stop(c)
-		cancel()
-	}()
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Go(func() {
-		select {
-		case <-c:
-			cancel()
-		case <-ctx.Done():
-		}
-	})
 
 	// run multiple workers to push metrics
 	for idx := range cfg.Workers {

@@ -19,16 +19,8 @@ const storageLogInterval = 5 * time.Second
 func Run(cfg *config.ServerConfig) error {
 	repo := repository.NewMemStorage()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	defer signal.Stop(c)
-	go func() {
-		<-c
-		cancel()
-	}()
 
 	// печатаем в консоль текущее состояние хранилища (для дебага)
 	go func() {
