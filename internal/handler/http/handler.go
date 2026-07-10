@@ -14,11 +14,17 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
-type Handler struct {
-	service service.MetricsService
+type MetricsService interface {
+	UpdateMetric(metric models.Metrics) error
+	GetMetric(mtype models.MetricType, name string) (models.Metrics, error)
+	GetAllMetrics() []models.Metrics
 }
 
-func NewHandler(s service.MetricsService) *Handler {
+type Handler struct {
+	service MetricsService
+}
+
+func NewHandler(s MetricsService) *Handler {
 	return &Handler{service: s}
 }
 

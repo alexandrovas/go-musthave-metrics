@@ -17,17 +17,11 @@ type Repository interface {
 	Counters() map[string]int64
 }
 
-type MetricsService interface {
-	UpdateMetric(metric models.Metrics) error
-	GetMetric(mtype models.MetricType, name string) (models.Metrics, error)
-	GetAllMetrics() []models.Metrics
-}
-
 type metricsService struct {
 	repo Repository
 }
 
-func NewMetricsService(repo Repository) MetricsService {
+func NewMetricsService(repo Repository) *metricsService {
 	return &metricsService{repo: repo}
 }
 
