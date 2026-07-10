@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
@@ -22,8 +23,10 @@ func Run(cfg *config.ServerConfig) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	var wg sync.WaitGroup
+
 	// печатаем в консоль текущее состояние хранилища (для дебага)
-	go func() {
+	wg.Go(func() {
 		ticker := time.NewTicker(storageLogInterval)
 		defer ticker.Stop()
 		for {
@@ -34,22 +37,28 @@ func Run(cfg *config.ServerConfig) error {
 				return
 			}
 		}
-	}()
+	})
 
 	srv := &http.Server{
 		Addr:    cfg.Address,
 		Handler: handlerHttp.NewRouter(repo),
 	}
 
-	go func() {
+	wg.Go(func() {
 		<-ctx.Done()
 		if err := srv.Shutdown(context.Background()); err != nil {
 			slog.Error("server shutdown", "error", err)
 		}
-	}()
+	})
 
 	slog.Info("starting server", "address", cfg.Address)
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	err := srv.ListenAndServe()
+	// на случай, если ListenAndServe завершился по причине, отличной от сигнала
+	// (например, ошибка старта) — разблокируем фоновые горутины и дожидаемся их
+	cancel()
+	wg.Wait()
+
+	if !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
