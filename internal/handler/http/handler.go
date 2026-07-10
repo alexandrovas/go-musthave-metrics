@@ -1,12 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -88,6 +89,27 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, formatValue(metric))
 }
 
+// metricRow — данные одной строки таблицы для шаблона, значение уже отформатировано в строку.
+type metricRow struct {
+	ID    string
+	MType models.MetricType
+	Value string
+}
+
+const metricsPageHTML = `<!DOCTYPE html>
+<html>
+<head><title>Metrics</title></head>
+<body>
+<h1>Metrics</h1>
+<table>
+<tr><th>Name</th><th>Type</th><th>Value</th></tr>
+{{range .}}<tr><td>{{.ID}}</td><td>{{.MType}}</td><td>{{.Value}}</td></tr>
+{{end}}</table>
+</body>
+</html>`
+
+var metricsPageTmpl = template.Must(template.New("metrics").Parse(metricsPageHTML))
+
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics := h.service.GetAllMetrics()
 
@@ -98,20 +120,19 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 		return metrics[i].ID < metrics[j].ID
 	})
 
-	var sb strings.Builder
-	sb.WriteString("<!DOCTYPE html><html><head><title>Metrics</title></head><body>")
-	sb.WriteString("<h1>Metrics</h1><table><tr><th>Name</th><th>Type</th><th>Value</th></tr>")
-	for _, m := range metrics {
-		sb.WriteString(formatMetricRow(m))
+	rows := make([]metricRow, len(metrics))
+	for i, m := range metrics {
+		rows[i] = metricRow{ID: m.ID, MType: m.MType, Value: formatValue(m)}
 	}
-	sb.WriteString("</table></body></html>")
+
+	var buf bytes.Buffer
+	if err := metricsPageTmpl.Execute(&buf, rows); err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, sb.String())
-}
-
-func formatMetricRow(m models.Metrics) string {
-	return fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%s</td></tr>", m.ID, m.MType, formatValue(m))
+	w.Write(buf.Bytes())
 }
 
 func formatValue(m models.Metrics) string {

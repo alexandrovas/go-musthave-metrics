@@ -10,13 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 )
-
-func ptr[T any](t T) *T {
-	return &t
-}
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -140,17 +135,24 @@ func TestListMetrics(t *testing.T) {
 	t.Run("lists all metrics", func(t *testing.T) {
 		status, body := request(t, srv, http.MethodGet, "/")
 		assert.Equal(t, http.StatusOK, status)
-		assert.Contains(t, body, formatMetricRow(
-			models.Metrics{
-				MType: models.Gauge,
-				ID:    "Alloc",
-				Value: ptr(float64(1024)),
-			}))
-		assert.Contains(t, body, formatMetricRow(
-			models.Metrics{
-				MType: models.Counter,
-				ID:    "PollCount",
-				Delta: ptr(int64(7)),
-			}))
+		assert.Contains(t, body, "<td>Alloc</td>")
+		assert.Contains(t, body, "<td>gauge</td>")
+		assert.Contains(t, body, "<td>1024</td>")
+		assert.Contains(t, body, "<td>PollCount</td>")
+		assert.Contains(t, body, "<td>counter</td>")
+		assert.Contains(t, body, "<td>7</td>")
 	})
+}
+
+func TestListMetricsEscapesHTML(t *testing.T) {
+	repo := repository.NewMemStorage()
+	repo.SetGauge(`<script>alert(1)</script>`, 42)
+
+	srv := httptest.NewServer(NewRouter(repo))
+	defer srv.Close()
+
+	_, body := request(t, srv, http.MethodGet, "/")
+
+	assert.NotContains(t, body, "<script>alert(1)</script>", "raw script tag must be escaped")
+	assert.Contains(t, body, "&lt;script&gt;alert(1)&lt;/script&gt;")
 }
