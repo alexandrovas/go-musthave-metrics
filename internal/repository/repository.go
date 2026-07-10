@@ -6,15 +6,6 @@ import (
 	"sync"
 )
 
-type Repository interface {
-	SetGauge(name string, value float64)
-	GetGauge(name string) (float64, bool)
-	AddCounter(name string, delta int64)
-	GetCounter(name string) (int64, bool)
-	Gauges() map[string]float64
-	Counters() map[string]int64
-}
-
 type MemStorage struct {
 	gauges   map[string]float64
 	counters map[string]int64

@@ -6,11 +6,10 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/middleware"
-	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
-func NewRouter(repo repository.Repository) http.Handler {
+func NewRouter(repo service.Repository) http.Handler {
 	svc := service.NewMetricsService(repo)
 	h := NewHandler(svc)
 

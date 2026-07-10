@@ -4,10 +4,18 @@ import (
 	"errors"
 
 	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
-	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 )
 
 var ErrNotFound = errors.New("metric not found")
+
+type Repository interface {
+	SetGauge(name string, value float64)
+	GetGauge(name string) (float64, bool)
+	AddCounter(name string, delta int64)
+	GetCounter(name string) (int64, bool)
+	Gauges() map[string]float64
+	Counters() map[string]int64
+}
 
 type MetricsService interface {
 	UpdateMetric(metric models.Metrics) error
@@ -16,10 +24,10 @@ type MetricsService interface {
 }
 
 type metricsService struct {
-	repo repository.Repository
+	repo Repository
 }
 
-func NewMetricsService(repo repository.Repository) MetricsService {
+func NewMetricsService(repo Repository) MetricsService {
 	return &metricsService{repo: repo}
 }
 
