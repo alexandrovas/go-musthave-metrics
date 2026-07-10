@@ -57,7 +57,8 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 		}
 	}
 
-	k.Load(env.Provider(".", env.Opt{
+	// load from env vars
+	if err := k.Load(env.Provider(".", env.Opt{
 		Prefix: envVarPrefix,
 		TransformFunc: func(k, v string) (string, any) {
 			// Transform the key: MM_SERVER_ADDRESS -> server.address
@@ -65,7 +66,9 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 				strings.TrimPrefix(k, envVarPrefix)), "_", ".")
 			return k, v
 		},
-	}), nil)
+	}), nil); err != nil {
+		return fmt.Errorf("load config from env: %w", err)
+	}
 
 	// load from CLI flags
 	if err := k.Load(posflag.Provider(flags, ".", k), nil); err != nil {
