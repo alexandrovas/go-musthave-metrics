@@ -7,31 +7,10 @@ import (
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/cmd/agent"
+	cmdHelper "github.com/alexandrovas/go-musthave-metrics/internal/cmd/helper"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/spf13/cobra"
 )
-
-func setupLogger(level string, format string) error {
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(level)); err != nil {
-		l = slog.LevelInfo
-	}
-	var h slog.Handler
-	switch config.LogFormat(format) {
-	case config.TextLogFormat:
-		h = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: l,
-		})
-	case config.JsonLogFormat:
-		h = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: l,
-		})
-	default:
-		return fmt.Errorf("unexpected log format: %s", format)
-	}
-	slog.SetDefault(slog.New(h))
-	return nil
-}
 
 var (
 	rootCmd = &cobra.Command{
@@ -42,7 +21,7 @@ var (
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
-			if err := setupLogger(cfg.Log.Level, string(cfg.Log.Format)); err != nil {
+			if err := cmdHelper.SetupLogger(cfg.Log.Level, string(cfg.Log.Format)); err != nil {
 				return fmt.Errorf("setup logger: %w", err)
 			}
 			if err := agent.Run(cfg); err != nil {
