@@ -7,17 +7,19 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
 )
 
 type agent struct {
 	cfg        *config.AgentConfig
 	collector  *collector
 	httpClient *http.Client
-	jobs       chan metricValue
+	jobs       chan pendingMetric
 }
 
 func Run(cfg *config.AgentConfig) error {
@@ -32,7 +34,7 @@ func Run(cfg *config.AgentConfig) error {
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs: make(chan metricValue, cfg.Workers*10),
+		jobs: make(chan pendingMetric, cfg.Workers*10),
 	}
 
 	slog.Info("Agent is running", "server", cfg.ServerAddress, "workers", cfg.Workers)
@@ -102,12 +104,14 @@ func (a *agent) runWorker(ctx context.Context, idx uint16) {
 	log := slog.With("worker", idx)
 	for {
 		select {
-		case m, ok := <-a.jobs:
+		case p, ok := <-a.jobs:
 			if !ok {
 				return
 			}
-			if err := a.sendMetric(ctx, m.name, string(m.mtype), m.value); err != nil {
-				log.Error("send metric", "type", m.mtype, "name", m.name, "value", m.value, "error", err)
+			m := p.Metric
+			if err := a.sendMetric(ctx, m.ID, string(m.MType), formatMetricValue(m)); err != nil {
+				log.Error("send metric", "type", m.MType, "name", m.ID, "error", err)
+				p.Restore()
 			}
 		case <-ctx.Done():
 			return
@@ -116,10 +120,11 @@ func (a *agent) runWorker(ctx context.Context, idx uint16) {
 }
 
 func (a *agent) report(ctx context.Context) {
-	for _, m := range a.collector.collect() {
+	for _, p := range a.collector.collect() {
 		select {
-		case a.jobs <- m:
+		case a.jobs <- p:
 		case <-ctx.Done():
+			p.Restore()
 			return
 		}
 	}
@@ -144,4 +149,14 @@ func (a *agent) sendMetric(ctx context.Context, name, mtype, value string) error
 		return fmt.Errorf("unexpected status %s", resp.Status)
 	}
 	return nil
+}
+
+func formatMetricValue(m models.Metrics) string {
+	switch m.MType {
+	case models.Gauge:
+		return strconv.FormatFloat(*m.Value, 'f', -1, 64)
+	case models.Counter:
+		return strconv.FormatInt(*m.Delta, 10)
+	}
+	return ""
 }

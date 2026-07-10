@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,7 +106,7 @@ func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[str
 		},
 		collector:  &collector{counters: counters, gauges: gauges},
 		httpClient: client,
-		jobs:       make(chan metricValue, 64),
+		jobs:       make(chan pendingMetric, 64),
 	}
 }
 
@@ -221,6 +222,89 @@ func TestAgentReportWorkers(t *testing.T) {
 
 	assert.Equal(t, totalMetrics, received, "all metrics must be sent")
 	assert.Greater(t, maxConcurrent, 1, "expected parallel requests with %d workers", numWorkers)
+}
+
+func TestCollectorRestoreCounter(t *testing.T) {
+	c := &collector{
+		counters: map[string]int64{"PollCount": 0},
+		gauges:   make(map[string]float64),
+	}
+
+	c.restoreCounter("PollCount", 5)
+
+	c.Lock()
+	got := c.counters["PollCount"]
+	c.Unlock()
+
+	require.Equal(t, int64(5), got)
+}
+
+func TestCollectorRestoreCounterZeroIsNoop(t *testing.T) {
+	c := &collector{
+		counters: map[string]int64{"PollCount": 3},
+		gauges:   make(map[string]float64),
+	}
+
+	c.restoreCounter("PollCount", 0)
+
+	c.Lock()
+	got := c.counters["PollCount"]
+	c.Unlock()
+
+	require.Equal(t, int64(3), got)
+}
+
+func TestCollectorCollectDrainsCounters(t *testing.T) {
+	c := &collector{
+		counters: map[string]int64{"PollCount": 5},
+		gauges:   make(map[string]float64),
+	}
+
+	values := c.collect()
+	require.Len(t, values, 1)
+	require.Equal(t, models.Counter, values[0].Metric.MType)
+	require.Equal(t, int64(5), *values[0].Metric.Delta)
+
+	// счётчик должен быть обнулён сразу при снятии снимка
+	c.Lock()
+	got := c.counters["PollCount"]
+	c.Unlock()
+	require.Equal(t, int64(0), got)
+}
+
+func TestPendingMetricGaugeRestoreIsNoop(t *testing.T) {
+	c := &collector{
+		counters: make(map[string]int64),
+		gauges:   map[string]float64{"Alloc": 42},
+	}
+
+	values := c.collect()
+	require.Len(t, values, 1)
+	require.Equal(t, models.Gauge, values[0].Metric.MType)
+
+	// Restore для gauge не должен паниковать и не должен ничего менять
+	require.NotPanics(t, values[0].Restore)
+}
+
+func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := newTestAgent(t, host, 1, map[string]int64{"PollCount": 5}, make(map[string]float64), srv.Client())
+	wg := startWorkers(t, a, 1)
+
+	a.report(t.Context())
+	close(a.jobs)
+	wg.Wait()
+
+	// отправка не удалась (500) — дельта должна вернуться в счётчик, а не потеряться
+	a.collector.Lock()
+	got := a.collector.counters["PollCount"]
+	a.collector.Unlock()
+	assert.Equal(t, int64(5), got)
 }
 
 func TestFormatGaugeValue(t *testing.T) {

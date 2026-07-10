@@ -3,7 +3,6 @@ package agent
 import (
 	"math/rand/v2"
 	"runtime"
-	"strconv"
 	"sync"
 
 	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
@@ -13,12 +12,6 @@ type collector struct {
 	counters map[string]int64
 	gauges   map[string]float64
 	sync.Mutex
-}
-
-type metricValue struct {
-	name  string
-	value string
-	mtype models.MetricType
 }
 
 func (s *collector) poll() {
@@ -58,26 +51,53 @@ func (s *collector) poll() {
 	s.Unlock()
 }
 
-func (s *collector) collect() []metricValue {
+// pendingMetric — метрика, готовая к отправке воркером. Restore нужно вызвать,
+// если отправка не удалась: для counter'а это вернёт изъятую дельту обратно
+// в накопитель (она уйдёт на следующем цикле report вместе с новыми
+// накоплениями), для gauge'а — no-op, так как мгновенное значение попросту
+// будет заменено следующим poll().
+type pendingMetric struct {
+	Metric  models.Metrics
+	Restore func()
+}
+
+var noopRestore = func() {}
+
+// collect снимает снимок всех метрик для отправки. Дельта каждого counter'а
+// оптимистично изымается (drain) из накопителя в этот же момент — это
+// гарантирует, что два разных вызова collect() никогда не заберут одну и ту
+// же дельту дважды, даже если предыдущий цикл report ещё не завершил
+// доставку (агент рассылает метрики асинхронно через пул воркеров).
+func (s *collector) collect() []pendingMetric {
 	s.Lock()
 	defer s.Unlock()
 
-	values := make([]metricValue, 0, len(s.gauges)+len(s.counters))
+	pending := make([]pendingMetric, 0, len(s.gauges)+len(s.counters))
 	for name, value := range s.gauges {
-		values = append(values, metricValue{
-			name:  name,
-			value: strconv.FormatFloat(value, 'f', -1, 64),
-			mtype: models.Gauge,
+		v := value
+		pending = append(pending, pendingMetric{
+			Metric:  models.Metrics{ID: name, MType: models.Gauge, Value: &v},
+			Restore: noopRestore,
 		})
 	}
-	for name, value := range s.counters {
-		values = append(values, metricValue{
-			name:  name,
-			value: strconv.FormatInt(value, 10),
-			mtype: models.Counter,
+	for name, delta := range s.counters {
+		d := delta
+		pending = append(pending, pendingMetric{
+			Metric: models.Metrics{ID: name, MType: models.Counter, Delta: &d},
+			Restore: func() {
+				s.restoreCounter(name, d)
+			},
 		})
+		s.counters[name] = 0
 	}
-	// reset counters
-	s.counters["PollCount"] = 0
-	return values
+	return pending
+}
+
+func (s *collector) restoreCounter(name string, delta int64) {
+	if delta == 0 {
+		return
+	}
+	s.Lock()
+	defer s.Unlock()
+	s.counters[name] += delta
 }
