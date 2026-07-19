@@ -6,10 +6,12 @@ import (
 	"time"
 )
 
-// responseWriter оборачивает http.ResponseWriter, чтобы перехватить статус-код ответа.
+// responseWriter оборачивает http.ResponseWriter, чтобы перехватить статус-код
+// размер тела ответа
 type responseWriter struct {
 	http.ResponseWriter
 	status int
+	size   int
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -17,7 +19,14 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// Logger логирует каждый HTTP-запрос через slog: метод, путь, статус и время выполнения.
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	size, err := rw.ResponseWriter.Write(b)
+	rw.size += size
+	return size, err
+}
+
+// Logger логирует каждый HTTP-запрос через slog: метод, путь, статус, время выполнения
+// и размер тела ответа
 func Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -30,7 +39,8 @@ func Logger(next http.Handler) http.Handler {
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,
-			"duration", time.Since(start))
+			"duration", time.Since(start),
+			"size", rw.size)
 
 		switch {
 		case rw.status >= 400 && rw.status < 500:

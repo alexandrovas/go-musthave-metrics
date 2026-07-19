@@ -25,5 +25,5 @@ vendor/
 .vscode
 
 # binaries
-agent
-server
+/cmd/agent/agent
+/cmd/server/server
