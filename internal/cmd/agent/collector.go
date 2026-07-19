@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"sync"
 
-	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
+	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
 
 type collector struct {

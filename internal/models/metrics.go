@@ -1,5 +1,9 @@
 package models
 
+import (
+	"encoding/json"
+)
+
 type MetricType string
 
 const (
@@ -18,4 +22,20 @@ type Metrics struct {
 	Delta *int64     `json:"delta,omitempty"`
 	Value *float64   `json:"value,omitempty"`
 	Hash  string     `json:"hash,omitempty"`
+}
+
+type ErrorResponse struct {
+	Error error `json:"error"`
+}
+
+func (er ErrorResponse) MarshalJSON() ([]byte, error) {
+	type ErrorResponseAlias ErrorResponse
+	aliasValue := struct {
+		ErrorResponseAlias
+		Error string `json:"error"`
+	}{
+		ErrorResponseAlias: ErrorResponseAlias(er),
+		Error:              er.Error.Error(),
+	}
+	return json.Marshal(aliasValue)
 }

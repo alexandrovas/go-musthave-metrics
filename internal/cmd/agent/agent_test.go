@@ -1,17 +1,18 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
-	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
+	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +24,10 @@ var allGaugeNames = []string{
 	"MSpanInuse", "MSpanSys", "Mallocs", "NextGC", "NumForcedGC",
 	"NumGC", "OtherSys", "PauseTotalNs", "StackInuse", "StackSys",
 	"Sys", "TotalAlloc", "RandomValue",
+}
+
+func ptr[T any](t T) *T {
+	return &t
 }
 
 func TestMetricsStorePoll(t *testing.T) {
@@ -64,14 +69,15 @@ func TestMetricsStorePoll(t *testing.T) {
 
 func TestSendMetric(t *testing.T) {
 	tests := []struct {
+		metric  models.Metrics
 		name    string
 		status  int
 		wantErr bool
 	}{
-		{"ok", http.StatusOK, false},
-		{"bad request", http.StatusBadRequest, true},
-		{"not found", http.StatusNotFound, true},
-		{"server error", http.StatusInternalServerError, true},
+		{models.Metrics{ID: "counter1", MType: models.Counter, Delta: ptr(int64(100))}, "ok", http.StatusOK, false},
+		{models.Metrics{}, "bad request", http.StatusBadRequest, true},
+		{models.Metrics{}, "not found", http.StatusNotFound, true},
+		{models.Metrics{}, "server error", http.StatusInternalServerError, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,7 +93,7 @@ func TestSendMetric(t *testing.T) {
 				},
 				httpClient: srv.Client(),
 			}
-			err := a.sendMetric(t.Context(), "X", "gauge", "1")
+			err := a.sendMetric(t.Context(), tc.metric)
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -121,42 +127,60 @@ func startWorkers(t *testing.T, a *agent, n uint16) *sync.WaitGroup {
 
 func TestAgentReport(t *testing.T) {
 	tests := []struct {
-		name      string
-		counters  map[string]int64
-		gauges    map[string]float64
-		wantPaths []string
+		name     string
+		counters map[string]int64
+		gauges   map[string]float64
 	}{
 		{
-			name:      "gauge and counter",
-			counters:  map[string]int64{"PollCount": 3},
-			gauges:    map[string]float64{"Alloc": 1024.0},
-			wantPaths: []string{"/update/gauge/Alloc/1024", "/update/counter/PollCount/3"},
+			name:     "gauge and counter",
+			counters: map[string]int64{"PollCount": 3},
+			gauges:   map[string]float64{"Alloc": 1024.0},
 		},
 		{
-			name:      "float gauge",
-			counters:  map[string]int64{},
-			gauges:    map[string]float64{"RandomValue": 0.5},
-			wantPaths: []string{"/update/gauge/RandomValue/0.5"},
+			name:     "float gauge",
+			counters: map[string]int64{},
+			gauges:   map[string]float64{"RandomValue": 0.5},
 		},
 		{
-			name:      "counter only",
-			counters:  map[string]int64{"PollCount": 7},
-			gauges:    map[string]float64{},
-			wantPaths: []string{"/update/counter/PollCount/7"},
+			name:     "counter only",
+			counters: map[string]int64{"PollCount": 7},
+			gauges:   map[string]float64{},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
-			received := make(map[string]string) // path → Content-Type
+			received := make([]models.Metrics, 0)
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/update", r.URL.Path)
+				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				r.Body.Close()
+
+				var m models.Metrics
+				err = json.Unmarshal(body, &m)
+				require.NoError(t, err)
+
 				mu.Lock()
-				received[r.URL.Path] = r.Header.Get("Content-Type")
+				received = append(received, m)
 				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer srv.Close()
+
+			// collect() drains counters, so copy expected values before report()
+			wantGauges := make(map[string]float64, len(tc.gauges))
+			wantCounters := make(map[string]int64, len(tc.counters))
+			for k, v := range tc.gauges {
+				wantGauges[k] = v
+			}
+			for k, v := range tc.counters {
+				wantCounters[k] = v
+			}
+			expectedCount := len(wantGauges) + len(wantCounters)
 
 			host := strings.TrimPrefix(srv.URL, "http://")
 			a := newTestAgent(t, host, 2, tc.counters, tc.gauges, srv.Client())
@@ -169,11 +193,26 @@ func TestAgentReport(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 
-			for _, path := range tc.wantPaths {
-				ct, ok := received[path]
-				require.True(t, ok, "expected POST %s", path)
-				assert.Equal(t, "text/plain", ct, "Content-Type for %s", path)
+			require.Len(t, received, expectedCount)
+
+			for _, m := range received {
+				switch m.MType {
+				case models.Gauge:
+					want, ok := wantGauges[m.ID]
+					require.True(t, ok, "unexpected gauge %q", m.ID)
+					assert.Equal(t, want, *m.Value)
+					delete(wantGauges, m.ID)
+				case models.Counter:
+					want, ok := wantCounters[m.ID]
+					require.True(t, ok, "unexpected counter %q", m.ID)
+					assert.Equal(t, want, *m.Delta)
+					delete(wantCounters, m.ID)
+				default:
+					t.Fatalf("unknown metric type %q", m.MType)
+				}
 			}
+			assert.Empty(t, wantGauges, "not all gauges sent")
+			assert.Empty(t, wantCounters, "not all counters sent")
 		})
 	}
 }
@@ -305,22 +344,4 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	got := a.collector.counters["PollCount"]
 	a.collector.Unlock()
 	assert.Equal(t, int64(5), got)
-}
-
-func TestFormatGaugeValue(t *testing.T) {
-	tests := []struct {
-		value float64
-		want  string
-	}{
-		{1024, "1024"},
-		{1024.5, "1024.5"},
-		{0, "0"},
-		{0.123456789, "0.123456789"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.want, func(t *testing.T) {
-			got := strconv.FormatFloat(tc.value, 'f', -1, 64)
-			assert.Equal(t, tc.want, got)
-		})
-	}
 }

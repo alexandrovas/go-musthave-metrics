@@ -1,18 +1,19 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
-	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
+	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
 
 type agent struct {
@@ -109,7 +110,7 @@ func (a *agent) runWorker(ctx context.Context, idx uint16) {
 				return
 			}
 			m := p.Metric
-			if err := a.sendMetric(ctx, m.ID, string(m.MType), formatMetricValue(m)); err != nil {
+			if err := a.sendMetric(ctx, m); err != nil {
 				log.Error("send metric", "type", m.MType, "name", m.ID, "error", err)
 				p.Restore()
 			}
@@ -130,14 +131,20 @@ func (a *agent) report(ctx context.Context) {
 	}
 }
 
-func (a *agent) sendMetric(ctx context.Context, name, mtype, value string) error {
-	url := fmt.Sprintf("http://%s/update/%s/%s/%s", a.cfg.ServerAddress, mtype, name, value)
+func (a *agent) sendMetric(ctx context.Context, metric models.Metrics) error {
+	url := fmt.Sprintf("http://%s/update", a.cfg.ServerAddress)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	body := new(bytes.Buffer)
+	err := json.NewEncoder(body).Encode(metric)
+	if err != nil {
+		return fmt.Errorf("json encode error: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
@@ -149,14 +156,4 @@ func (a *agent) sendMetric(ctx context.Context, name, mtype, value string) error
 		return fmt.Errorf("unexpected status %s", resp.Status)
 	}
 	return nil
-}
-
-func formatMetricValue(m models.Metrics) string {
-	switch m.MType {
-	case models.Gauge:
-		return strconv.FormatFloat(*m.Value, 'f', -1, 64)
-	case models.Counter:
-		return strconv.FormatInt(*m.Delta, 10)
-	}
-	return ""
 }
