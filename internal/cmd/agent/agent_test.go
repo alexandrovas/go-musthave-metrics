@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -155,10 +156,14 @@ func TestAgentReport(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/update", r.URL.Path)
 				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+				assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 
-				body, err := io.ReadAll(r.Body)
+				zr, err := gzip.NewReader(r.Body)
 				require.NoError(t, err)
-				r.Body.Close()
+				defer zr.Close()
+
+				body, err := io.ReadAll(zr)
+				require.NoError(t, err)
 
 				var m models.Metrics
 				err = json.Unmarshal(body, &m)

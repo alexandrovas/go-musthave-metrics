@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -134,17 +135,27 @@ func (a *agent) report(ctx context.Context) {
 func (a *agent) sendMetric(ctx context.Context, metric models.Metrics) error {
 	url := fmt.Sprintf("http://%s/update", a.cfg.ServerAddress)
 
-	body := new(bytes.Buffer)
-	err := json.NewEncoder(body).Encode(metric)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(metric); err != nil {
 		return fmt.Errorf("json encode error: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	var compressed bytes.Buffer
+	gw := gzip.NewWriter(&compressed)
+	if _, err := gw.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("gzip write error: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return fmt.Errorf("gzip close error: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &compressed)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Accept-Encoding", "gzip")
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {

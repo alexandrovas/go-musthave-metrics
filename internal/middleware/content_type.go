@@ -5,6 +5,7 @@ import "net/http"
 const (
 	contentTypeHeader          = "Content-Type"
 	contentTypeApplicationJson = "application/json"
+	contentTypeTextHtml        = "text/html"
 )
 
 func RequireContentTypeJson(next http.Handler) http.Handler {

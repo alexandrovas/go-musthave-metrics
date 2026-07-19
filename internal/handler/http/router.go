@@ -21,7 +21,7 @@ func NewRouter(repo service.Repository) http.Handler {
 	h := NewHandler(svc)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(middleware.Logger, middleware.Compression)
 
 	r.With(middleware.RequireContentTypeJson).Post("/update", h.UpdateMetricJson)
 	r.With(middleware.RequireContentTypeJson).Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
