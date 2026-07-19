@@ -34,7 +34,7 @@ func cmd() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
-	cmd.PersistentFlags().StringP("server_address", "a", "localhost:8080", "server address")
+	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server address")
 	cmd.PersistentFlags().VarP(newDurationValue(2*time.Second), "poll_interval", "p", "Metrics poll interval (e.g. 2s or 2)")
 	cmd.PersistentFlags().VarP(newDurationValue(10*time.Second), "report_interval", "r", "Metrics report interval (e.g. 10s or 10)")
 	cmd.PersistentFlags().Uint16P("workers", "w", 5, "Workers count")

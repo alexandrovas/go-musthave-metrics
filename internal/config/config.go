@@ -15,8 +15,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const envVarPrefix = "MM_"
-
 type LogFormat string
 
 const (
@@ -37,7 +35,7 @@ type ServerConfig struct {
 
 // конфигурация агента
 type AgentConfig struct {
-	ServerAddress  string        `koanf:"server_address"`
+	ServerAddress  string        `koanf:"address"`
 	PollInterval   time.Duration `koanf:"poll_interval"`
 	ReportInterval time.Duration `koanf:"report_interval"`
 	Workers        uint16        `koanf:"workers"`
@@ -59,11 +57,9 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 
 	// load from env vars
 	if err := k.Load(env.Provider(".", env.Opt{
-		Prefix: envVarPrefix,
 		TransformFunc: func(k, v string) (string, any) {
-			// Transform the key: MM_SERVER_ADDRESS -> server.address
-			k = strings.ReplaceAll(strings.ToLower(
-				strings.TrimPrefix(k, envVarPrefix)), "_", ".")
+			// Transform the key: SERVER_ADDRESS -> server.address
+			k = strings.ReplaceAll(strings.ToLower(k), "_", ".")
 			return k, v
 		},
 	}), nil); err != nil {
