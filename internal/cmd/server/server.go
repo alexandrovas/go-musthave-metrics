@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,6 +25,26 @@ func Run(cfg *config.ServerConfig) error {
 	defer cancel()
 
 	var wg sync.WaitGroup
+
+	if cfg.FileStoragePath != "" {
+
+		// Восстановление состояния из файла при старте
+		if cfg.RestoreState {
+			if err := repo.Load(cfg.FileStoragePath); err != nil {
+				return fmt.Errorf("cannot restore state: %w", err)
+			}
+			slog.Info("state restored from file", "path", cfg.FileStoragePath)
+		}
+
+		// Настройка сохранения: синхронное (интервал == 0) или периодическое
+		if cfg.StoreInterval == 0 {
+			repo.EnableSyncSave(cfg.FileStoragePath)
+		} else {
+			wg.Go(func() {
+				repo.RunPeriodicSave(ctx, cfg.FileStoragePath, cfg.StoreInterval)
+			})
+		}
+	}
 
 	// печатаем в консоль текущее состояние хранилища (для дебага)
 	wg.Go(func() {
@@ -53,8 +74,6 @@ func Run(cfg *config.ServerConfig) error {
 
 	slog.Info("starting server", "address", cfg.Address)
 	err := srv.ListenAndServe()
-	// на случай, если ListenAndServe завершился по причине, отличной от сигнала
-	// (например, ошибка старта) — разблокируем фоновые горутины и дожидаемся их
 	cancel()
 	wg.Wait()
 

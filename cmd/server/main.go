@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -35,6 +36,9 @@ func cmd() *cobra.Command {
 
 	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
 	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server listen address")
+	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(300*time.Second), "store_interval", "i", "storage save interval (0 - synchronously write)")
+	cmd.PersistentFlags().StringP("file_storage_path", "f", "", "state file storage path")
+	cmd.PersistentFlags().BoolP("restore", "r", false, "restore previosly saved state")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
 
