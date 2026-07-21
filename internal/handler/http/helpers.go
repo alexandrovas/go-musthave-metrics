@@ -23,7 +23,6 @@ func writeJsonBody(w http.ResponseWriter, resp any, statusCode int) {
 func decodeMetric(r *http.Request) (models.Metrics, error) {
 	var metric models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
-		slog.Error("cannot decode request JSON body", "error", err)
 		return metric, err
 	}
 	return metric, nil
