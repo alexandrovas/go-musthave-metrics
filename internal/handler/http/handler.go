@@ -101,7 +101,8 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJsonBody(w, nil, http.StatusOK)
+	// возвращаем пустой JSON в случае успеха
+	writeJsonBody(w, make(map[string]interface{}), http.StatusOK)
 }
 
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {

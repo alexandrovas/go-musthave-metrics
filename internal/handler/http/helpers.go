@@ -12,11 +12,9 @@ func writeJsonBody(w http.ResponseWriter, resp any, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
-	if resp != nil {
-		enc := json.NewEncoder(w)
-		if err := enc.Encode(resp); err != nil {
-			slog.Debug("error encoding response", "error", err)
-		}
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(resp); err != nil {
+		slog.Debug("error encoding response", "error", err)
 	}
 }
 
