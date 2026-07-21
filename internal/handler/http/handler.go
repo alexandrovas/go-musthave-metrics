@@ -100,6 +100,8 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 			http.StatusInternalServerError)
 		return
 	}
+
+	writeJsonBody(w, nil, http.StatusOK)
 }
 
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
