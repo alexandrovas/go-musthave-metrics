@@ -86,6 +86,11 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 		}
 	}
 
+	// load from CLI flags
+	if err := k.Load(posflag.Provider(flags, ".", k), nil); err != nil {
+		return fmt.Errorf("load config from flags: %w", err)
+	}
+
 	// load from env vars
 	if err := k.Load(env.Provider(".", env.Opt{
 		TransformFunc: func(k, v string) (string, any) {
@@ -95,11 +100,6 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 		},
 	}), nil); err != nil {
 		return fmt.Errorf("load config from env: %w", err)
-	}
-
-	// load from CLI flags
-	if err := k.Load(posflag.Provider(flags, ".", k), nil); err != nil {
-		return fmt.Errorf("load config from flags: %w", err)
 	}
 
 	if err := k.UnmarshalWithConf("", out, koanf.UnmarshalConf{
