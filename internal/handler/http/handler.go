@@ -28,7 +28,7 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
 		writeJsonBody(w, models.ErrorResponse{Error: ErrJSONDecode},
-			http.StatusInternalServerError)
+			http.StatusBadRequest)
 		return
 	}
 
@@ -66,7 +66,7 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
 		writeJsonBody(w, models.ErrorResponse{Error: ErrJSONDecode},
-			http.StatusInternalServerError)
+			http.StatusBadRequest)
 		return
 	}
 
