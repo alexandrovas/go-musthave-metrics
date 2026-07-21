@@ -27,13 +27,13 @@ func NewHandler(s MetricsService) *Handler {
 func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
-		writeJsonBody(w, models.ErrorResponse{Error: ErrJSONDecode},
+		writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if metric.ID == "" {
-		writeJsonBody(w, models.ErrorResponse{Error: ErrMetricIdIsRequired},
+		writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
 			http.StatusBadRequest)
 		return
 	}
@@ -48,7 +48,7 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			slog.Error("get metric error", "error", err)
-			writeJsonBody(w, models.ErrorResponse{Error: ErrInternal},
+			writeJsonBody(w, models.ErrorResponse{Error: errInternal},
 				http.StatusInternalServerError)
 			return
 		}
@@ -56,7 +56,7 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 		writeJsonBody(w, metric, http.StatusOK)
 		return
 	default:
-		writeJsonBody(w, models.ErrorResponse{Error: ErrUnknownMetricType},
+		writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
 			http.StatusBadRequest)
 		return
 	}
@@ -65,13 +65,13 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
-		writeJsonBody(w, models.ErrorResponse{Error: ErrJSONDecode},
+		writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if metric.ID == "" {
-		writeJsonBody(w, models.ErrorResponse{Error: ErrMetricIdIsRequired},
+		writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
 			http.StatusBadRequest)
 		return
 	}
@@ -79,24 +79,24 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	switch metric.MType {
 	case models.Gauge:
 		if metric.Value == nil {
-			writeJsonBody(w, models.ErrorResponse{Error: ErrValueIsRequired},
+			writeJsonBody(w, models.ErrorResponse{Error: errValueIsRequired},
 				http.StatusBadRequest)
 			return
 		}
 	case models.Counter:
 		if metric.Delta == nil {
-			writeJsonBody(w, models.ErrorResponse{Error: ErrDeltaIsRequired},
+			writeJsonBody(w, models.ErrorResponse{Error: errDeltaIsRequired},
 				http.StatusBadRequest)
 			return
 		}
 	default:
-		writeJsonBody(w, models.ErrorResponse{Error: ErrUnknownMetricType},
+		writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
 			http.StatusBadRequest)
 		return
 	}
 
 	if err := h.service.UpdateMetric(metric); err != nil {
-		writeJsonBody(w, models.ErrorResponse{Error: ErrFailedUpdateMetrics},
+		writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
 			http.StatusInternalServerError)
 		return
 	}
