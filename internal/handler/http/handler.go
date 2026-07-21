@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -18,22 +19,43 @@ import (
 
 type Handler struct {
 	service MetricsService
+	logger  *slog.Logger
 }
 
-func NewHandler(s MetricsService) *Handler {
-	return &Handler{service: s}
+func NewHandler(s MetricsService, logger *slog.Logger) *Handler {
+	return &Handler{
+		service: s,
+		logger:  logger,
+	}
+}
+
+func (h *Handler) writeJsonBody(w http.ResponseWriter, resp any, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Debug("error encoding response", "error", err)
+	}
+}
+
+func decodeMetric(r *http.Request) (models.Metrics, error) {
+	var metric models.Metrics
+	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
+		return metric, err
+	}
+	return metric, nil
 }
 
 func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
-		writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if metric.ID == "" {
-		writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
 			http.StatusBadRequest)
 		return
 	}
@@ -43,20 +65,20 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 		metric, err := h.service.GetMetric(metric.MType, metric.ID)
 		if err != nil {
 			if errors.Is(err, service.ErrNotFound) {
-				writeJsonBody(w, models.ErrorResponse{Error: service.ErrNotFound},
+				h.writeJsonBody(w, models.ErrorResponse{Error: service.ErrNotFound},
 					http.StatusNotFound)
 				return
 			}
-			slog.Error("get metric error", "error", err)
-			writeJsonBody(w, models.ErrorResponse{Error: errInternal},
+			h.logger.Error("get metric error", "error", err)
+			h.writeJsonBody(w, models.ErrorResponse{Error: errInternal},
 				http.StatusInternalServerError)
 			return
 		}
 
-		writeJsonBody(w, metric, http.StatusOK)
+		h.writeJsonBody(w, metric, http.StatusOK)
 		return
 	default:
-		writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
 			http.StatusBadRequest)
 		return
 	}
@@ -65,13 +87,13 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
-		writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if metric.ID == "" {
-		writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
 			http.StatusBadRequest)
 		return
 	}
@@ -79,30 +101,30 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	switch metric.MType {
 	case models.Gauge:
 		if metric.Value == nil {
-			writeJsonBody(w, models.ErrorResponse{Error: errValueIsRequired},
+			h.writeJsonBody(w, models.ErrorResponse{Error: errValueIsRequired},
 				http.StatusBadRequest)
 			return
 		}
 	case models.Counter:
 		if metric.Delta == nil {
-			writeJsonBody(w, models.ErrorResponse{Error: errDeltaIsRequired},
+			h.writeJsonBody(w, models.ErrorResponse{Error: errDeltaIsRequired},
 				http.StatusBadRequest)
 			return
 		}
 	default:
-		writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
 			http.StatusBadRequest)
 		return
 	}
 
 	if err := h.service.UpdateMetric(metric); err != nil {
-		writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
+		h.writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
 			http.StatusInternalServerError)
 		return
 	}
 
 	// возвращаем пустой JSON в случае успеха
-	writeJsonBody(w, make(map[string]interface{}), http.StatusOK)
+	h.writeJsonBody(w, make(map[string]interface{}), http.StatusOK)
 }
 
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {

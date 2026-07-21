@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -16,12 +17,12 @@ type MetricsService interface {
 	GetAllMetrics() []models.Metrics
 }
 
-func NewRouter(repo service.Repository) http.Handler {
+func NewRouter(repo service.Repository, logger *slog.Logger) http.Handler {
 	svc := service.NewMetricsService(repo)
-	h := NewHandler(svc)
+	h := NewHandler(svc, logger)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger, middleware.Compression)
+	r.Use(middleware.Logger(logger), middleware.Compression)
 
 	r.With(middleware.RequireContentTypeJson).Post("/update", h.UpdateMetricJson)
 	r.With(middleware.RequireContentTypeJson).Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github

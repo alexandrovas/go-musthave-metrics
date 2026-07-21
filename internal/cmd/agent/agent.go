@@ -17,17 +17,16 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
 
-type agent struct {
+type Agent struct {
 	cfg        *config.AgentConfig
 	collector  *collector
 	httpClient *http.Client
 	jobs       chan pendingMetric
+	logger     *slog.Logger
 }
 
-func Run(cfg *config.AgentConfig) error {
-	ctx := context.Background()
-
-	agent := &agent{
+func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
+	return &Agent{
 		cfg: cfg,
 		collector: &collector{
 			counters: make(map[string]int64),
@@ -36,10 +35,15 @@ func Run(cfg *config.AgentConfig) error {
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs: make(chan pendingMetric, cfg.Workers*10),
+		jobs:   make(chan pendingMetric, cfg.Workers*10),
+		logger: logger,
 	}
+}
 
-	slog.Info("Agent is running", "server", cfg.ServerAddress, "workers", cfg.Workers)
+func (a *Agent) Run() error {
+	ctx := context.Background()
+
+	a.logger.Info("Agent is running", "server", a.cfg.ServerAddress, "workers", a.cfg.Workers)
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
@@ -47,72 +51,69 @@ func Run(cfg *config.AgentConfig) error {
 	var wg sync.WaitGroup
 
 	// run multiple workers to push metrics
-	for idx := range cfg.Workers {
+	for idx := range a.cfg.Workers {
 		wg.Go(func() {
-			agent.runWorker(ctx, idx)
+			a.runWorker(ctx, idx)
 		})
 	}
 
 	// run report metrics goroutine
 	wg.Go(func() {
-		agent.runReporting(ctx)
+		a.runReporting(ctx)
 	})
 
 	// run poll metrics goroutine
 	wg.Go(func() {
-		agent.runPolling(ctx)
+		a.runPolling(ctx)
 	})
 
 	wg.Wait()
-	slog.Info("Agent stopped")
+	a.logger.Info("Agent stopped")
 	return nil
 }
 
-func (a *agent) runReporting(ctx context.Context) {
+func (a *Agent) runReporting(ctx context.Context) {
 	timer := time.NewTicker(a.cfg.ReportInterval)
-	slog.Debug("Reporting process started...", "interval", a.cfg.ReportInterval)
+	a.logger.Debug("Reporting process started...", "interval", a.cfg.ReportInterval)
 	for {
 		select {
 		case <-timer.C:
 			a.report(ctx)
-			slog.Debug("Metrics successfully published")
-
+			a.logger.Debug("Metrics successfully published")
 		case <-ctx.Done():
 			timer.Stop()
-			slog.Debug("Reporting stopped")
+			a.logger.Debug("Reporting stopped")
 			return
 		}
 	}
 }
 
-func (a *agent) runPolling(ctx context.Context) {
+func (a *Agent) runPolling(ctx context.Context) {
 	timer := time.NewTicker(a.cfg.PollInterval)
-	slog.Debug("Polling process started...", "interval", a.cfg.PollInterval)
+	a.logger.Debug("Polling process started...", "interval", a.cfg.PollInterval)
 	for {
 		select {
 		case <-timer.C:
 			a.collector.poll()
-			slog.Debug("Metrics successfully polled")
-
+			a.logger.Debug("Metrics successfully polled")
 		case <-ctx.Done():
 			timer.Stop()
-			slog.Debug("Polling stopped")
+			a.logger.Debug("Polling stopped")
 			return
 		}
 	}
 }
 
-func (a *agent) runWorker(ctx context.Context, idx uint16) {
-	log := slog.With("worker", idx)
+func (a *Agent) runWorker(ctx context.Context, idx uint16) {
+	log := a.logger.With("worker", idx)
 	for {
 		select {
 		case p, ok := <-a.jobs:
 			if !ok {
 				return
 			}
-			m := p.Metric
-			if err := a.sendMetric(ctx, m); err != nil {
-				log.Error("send metric", "type", m.MType, "name", m.ID, "error", err)
+			if err := a.sendMetric(ctx, p.Metric); err != nil {
+				log.Error("send metric", "type", p.Metric.MType, "name", p.Metric.ID, "error", err)
 				p.Restore()
 			}
 		case <-ctx.Done():
@@ -121,7 +122,7 @@ func (a *agent) runWorker(ctx context.Context, idx uint16) {
 	}
 }
 
-func (a *agent) report(ctx context.Context) {
+func (a *Agent) report(ctx context.Context) {
 	for _, p := range a.collector.collect() {
 		select {
 		case a.jobs <- p:
@@ -132,7 +133,7 @@ func (a *agent) report(ctx context.Context) {
 	}
 }
 
-func (a *agent) sendMetric(ctx context.Context, metric models.Metrics) error {
+func (a *Agent) sendMetric(ctx context.Context, metric models.Metrics) error {
 	url := fmt.Sprintf("http://%s/update", a.cfg.ServerAddress)
 
 	var buf bytes.Buffer

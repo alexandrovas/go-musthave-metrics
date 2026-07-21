@@ -20,12 +20,14 @@ type MemStorage struct {
 	mu       sync.Mutex
 
 	syncPath string // если не пусто — синхронное сохранение после каждой мутации
+	logger   *slog.Logger
 }
 
-func NewMemStorage() *MemStorage {
+func NewMemStorage(logger *slog.Logger) *MemStorage {
 	return &MemStorage{
 		gauges:   make(map[string]float64),
 		counters: make(map[string]int64),
+		logger:   logger,
 	}
 }
 
@@ -44,7 +46,7 @@ func (s *MemStorage) SetGauge(name string, value float64) {
 
 	if s.syncPath != "" {
 		if err := s.saveLocked(s.syncPath); err != nil {
-			slog.Error("sync save after SetGauge", "error", err)
+			s.logger.Error("sync save after SetGauge", "error", err)
 		}
 	}
 }
@@ -65,7 +67,7 @@ func (s *MemStorage) AddCounter(name string, delta int64) {
 
 	if s.syncPath != "" {
 		if err := s.saveLocked(s.syncPath); err != nil {
-			slog.Error("sync save after AddCounter", "error", err)
+			s.logger.Error("sync save after AddCounter", "error", err)
 		}
 	}
 }
@@ -129,24 +131,24 @@ func (s *MemStorage) saveLocked(path string) error {
 	// если произошла ошибка при записи, удаляем временный файл и возвращаем ошибку
 	if err := enc.Encode(metrics); err != nil {
 		f.Close()
-		removeFile(tmpPath)
+		s.removeFile(tmpPath)
 		return fmt.Errorf("write file: %w", err)
 	}
 
 	if err := f.Close(); err != nil {
-		removeFile(tmpPath)
+		s.removeFile(tmpPath)
 		return fmt.Errorf("close file: %w", err)
 	}
 
-	// переименовываем файл
+	// атомарно переименовываем файл
 	return os.Rename(tmpPath, path)
 }
 
 // removeFile - удаляет файл по заданному пути. Если возникает ошибка,
 // игнорируем её и пишем в error log
-func removeFile(filename string) {
+func (s *MemStorage) removeFile(filename string) {
 	if err := os.Remove(filename); err != nil {
-		slog.Error("cannot delete temporary file", "filename", filename, "error", err)
+		s.logger.Error("cannot delete temporary file", "filename", filename, "error", err)
 	}
 }
 
@@ -192,20 +194,20 @@ func (s *MemStorage) RunPeriodicSave(ctx context.Context, path string, interval 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	slog.Debug("running periodic save state to file", "path", path, "interval", interval)
+	s.logger.Debug("running periodic save state to file", "path", path, "interval", interval)
 	for {
 		select {
 		case <-ticker.C:
 			if err := s.Save(path); err != nil {
-				slog.Error("periodic save failed", "path", path, "error", err)
+				s.logger.Error("periodic save failed", "path", path, "error", err)
 			} else {
-				slog.Debug("state saved", "path", path)
+				s.logger.Debug("state saved", "path", path)
 			}
 		case <-ctx.Done():
 			if err := s.Save(path); err != nil {
-				slog.Error("final save failed", "path", path, "error", err)
+				s.logger.Error("final save failed", "path", path, "error", err)
 			}
-			slog.Debug("state saved", "path", path)
+			s.logger.Debug("state saved", "path", path)
 			return
 		}
 	}
@@ -216,5 +218,5 @@ func (s *MemStorage) Log() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	slog.Debug("storage state", "gauges", s.gauges, "counters", s.counters)
+	s.logger.Debug("storage state", "gauges", s.gauges, "counters", s.counters)
 }

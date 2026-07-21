@@ -9,44 +9,54 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	handlerHttp "github.com/alexandrovas/go-musthave-metrics/internal/handler/http"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 )
 
-const storageLogInterval = 5 * time.Second
+type Server struct {
+	cfg    *config.ServerConfig
+	logger *slog.Logger
+}
 
-func Run(cfg *config.ServerConfig) error {
-	repo := repository.NewMemStorage()
+func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
+	return &Server{
+		cfg:    cfg,
+		logger: logger,
+	}
+}
+
+func (s *Server) Run() error {
+	repo := repository.NewMemStorage(s.logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	var wg sync.WaitGroup
 
-	if cfg.FileStoragePath != "" {
+	if s.cfg.FileStoragePath != "" {
 
 		// Восстановление состояния из файла при старте
-		if cfg.RestoreState {
-			if err := repo.Load(cfg.FileStoragePath); err != nil {
+		if s.cfg.RestoreState {
+			if err := repo.Load(s.cfg.FileStoragePath); err != nil {
 				return fmt.Errorf("cannot restore state: %w", err)
 			}
-			slog.Info("state restored from file", "path", cfg.FileStoragePath)
+			s.logger.Info("state restored from file", "path", s.cfg.FileStoragePath)
 		}
 
 		// Настройка сохранения: синхронное (интервал == 0) или периодическое
-		if cfg.StoreInterval == 0 {
-			repo.EnableSyncSave(cfg.FileStoragePath)
+		if s.cfg.StoreInterval == 0 {
+			repo.EnableSyncSave(s.cfg.FileStoragePath)
 		} else {
 			wg.Go(func() {
-				repo.RunPeriodicSave(ctx, cfg.FileStoragePath, cfg.StoreInterval)
+				repo.RunPeriodicSave(ctx, s.cfg.FileStoragePath, s.cfg.StoreInterval)
 			})
 		}
 	}
 
 	// печатаем в консоль текущее состояние хранилища (для дебага)
+	// const storageLogInterval = 5 * time.Second
 	// wg.Go(func() {
 	// 	ticker := time.NewTicker(storageLogInterval)
 	// 	defer ticker.Stop()
@@ -61,18 +71,18 @@ func Run(cfg *config.ServerConfig) error {
 	// })
 
 	srv := &http.Server{
-		Addr:    cfg.Address,
-		Handler: handlerHttp.NewRouter(repo),
+		Addr:    s.cfg.Address,
+		Handler: handlerHttp.NewRouter(repo, s.logger),
 	}
 
 	wg.Go(func() {
 		<-ctx.Done()
 		if err := srv.Shutdown(context.Background()); err != nil {
-			slog.Error("server shutdown", "error", err)
+			s.logger.Error("server shutdown", "error", err)
 		}
 	})
 
-	slog.Info("starting server", "address", cfg.Address)
+	s.logger.Info("starting server", "address", s.cfg.Address)
 	err := srv.ListenAndServe()
 	cancel()
 	wg.Wait()

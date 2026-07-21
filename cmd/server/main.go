@@ -24,10 +24,12 @@ func cmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
-			if err := cmdHelper.SetupLogger(cfg.Log.Level, string(cfg.Log.Format)); err != nil {
+			logger, err := cmdHelper.NewLogger(cfg.Log.Level, string(cfg.Log.Format))
+			if err != nil {
 				return fmt.Errorf("setup logger: %w", err)
 			}
-			if err := server.Run(cfg); err != nil {
+			s := server.New(cfg, logger)
+			if err := s.Run(); err != nil {
 				return err
 			}
 			return nil

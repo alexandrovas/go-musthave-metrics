@@ -8,10 +8,10 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 )
 
-func SetupLogger(level string, format string) error {
+func NewLogger(level string, format string) (*slog.Logger, error) {
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(level)); err != nil {
-		return err
+		return nil, err
 	}
 	var h slog.Handler
 	switch config.LogFormat(format) {
@@ -24,8 +24,7 @@ func SetupLogger(level string, format string) error {
 			Level: l,
 		})
 	default:
-		return fmt.Errorf("unexpected log format: %s", format)
+		return nil, fmt.Errorf("unexpected log format: %s", format)
 	}
-	slog.SetDefault(slog.New(h))
-	return nil
+	return slog.New(h), nil
 }

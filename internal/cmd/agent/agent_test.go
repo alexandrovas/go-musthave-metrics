@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 var allGaugeNames = []string{
 	"Alloc", "BuckHashSys", "Frees", "GCCPUFraction", "GCSys",
@@ -88,11 +91,12 @@ func TestSendMetric(t *testing.T) {
 			defer srv.Close()
 
 			host := strings.TrimPrefix(srv.URL, "http://")
-			a := &agent{
+			a := &Agent{
 				cfg: &config.AgentConfig{
 					ServerAddress: host,
 				},
 				httpClient: srv.Client(),
+				logger:     testLogger,
 			}
 			err := a.sendMetric(t.Context(), tc.metric)
 			if tc.wantErr {
@@ -104,9 +108,9 @@ func TestSendMetric(t *testing.T) {
 	}
 }
 
-func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[string]int64, gauges map[string]float64, client *http.Client) *agent {
+func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[string]int64, gauges map[string]float64, client *http.Client) *Agent {
 	t.Helper()
-	return &agent{
+	return &Agent{
 		cfg: &config.AgentConfig{
 			ServerAddress: host,
 			Workers:       numWorkers,
@@ -114,10 +118,11 @@ func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[str
 		collector:  &collector{counters: counters, gauges: gauges},
 		httpClient: client,
 		jobs:       make(chan pendingMetric, 64),
+		logger:     testLogger,
 	}
 }
 
-func startWorkers(t *testing.T, a *agent, n uint16) *sync.WaitGroup {
+func startWorkers(t *testing.T, a *Agent, n uint16) *sync.WaitGroup {
 	t.Helper()
 	var wg sync.WaitGroup
 	for idx := range n {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,10 +17,12 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 )
 
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	repo := repository.NewMemStorage()
-	srv := httptest.NewServer(NewRouter(repo))
+	repo := repository.NewMemStorage(testLogger)
+	srv := httptest.NewServer(NewRouter(repo, testLogger))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -166,10 +169,10 @@ func TestListMetrics(t *testing.T) {
 }
 
 func TestListMetricsEscapesHTML(t *testing.T) {
-	repo := repository.NewMemStorage()
+	repo := repository.NewMemStorage(testLogger)
 	repo.SetGauge(`<script>alert(1)</script>`, 42)
 
-	srv := httptest.NewServer(NewRouter(repo))
+	srv := httptest.NewServer(NewRouter(repo, testLogger))
 	defer srv.Close()
 
 	_, body := request(t, srv, http.MethodGet, "/")

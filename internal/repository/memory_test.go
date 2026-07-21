@@ -2,6 +2,8 @@ package repository
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
+
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestMemStorageGauge(t *testing.T) {
 	tests := []struct {
@@ -25,7 +29,7 @@ func TestMemStorageGauge(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewMemStorage()
+			s := NewMemStorage(testLogger)
 			for _, v := range tc.values {
 				s.SetGauge("Alloc", v)
 			}
@@ -37,7 +41,7 @@ func TestMemStorageGauge(t *testing.T) {
 }
 
 func TestMemStorageGaugeNotFound(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	_, ok := s.GetGauge("NonExistent")
 	assert.False(t, ok)
 }
@@ -55,7 +59,7 @@ func TestMemStorageCounter(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewMemStorage()
+			s := NewMemStorage(testLogger)
 			for _, d := range tc.deltas {
 				s.AddCounter("PollCount", d)
 			}
@@ -67,13 +71,13 @@ func TestMemStorageCounter(t *testing.T) {
 }
 
 func TestMemStorageCounterNotFound(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	_, ok := s.GetCounter("NonExistent")
 	assert.False(t, ok)
 }
 
 func TestMemStorageAll(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	s.SetGauge("Alloc", 1024)
 	s.SetGauge("Sys", 4096)
 	s.AddCounter("PollCount", 7)
@@ -89,7 +93,7 @@ func TestMemStorageAll(t *testing.T) {
 }
 
 func TestMemStorageGaugesCopy(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	s.SetGauge("X", 1)
 
 	cp := s.Gauges()
@@ -105,7 +109,7 @@ func TestMemStorageSaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "metrics.json")
 
-	src := NewMemStorage()
+	src := NewMemStorage(testLogger)
 	src.SetGauge("Alloc", 1024.0)
 	src.SetGauge("Sys", 4096.0)
 	src.AddCounter("PollCount", 7)
@@ -114,7 +118,7 @@ func TestMemStorageSaveLoad(t *testing.T) {
 	err := src.Save(path)
 	require.NoError(t, err)
 
-	dst := NewMemStorage()
+	dst := NewMemStorage(testLogger)
 	err = dst.Load(path)
 	require.NoError(t, err)
 
@@ -132,7 +136,7 @@ func TestMemStorageSaveLoad(t *testing.T) {
 }
 
 func TestMemStorageLoadNonExistent(t *testing.T) {
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	err := s.Load("/tmp/no-such-file-42.json")
 	require.NoError(t, err)
 }
@@ -141,11 +145,11 @@ func TestMemStorageSaveEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.json")
 
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	err := s.Save(path)
 	require.NoError(t, err)
 
-	dst := NewMemStorage()
+	dst := NewMemStorage(testLogger)
 	err = dst.Load(path)
 	require.NoError(t, err)
 
@@ -160,7 +164,7 @@ func TestMemStorageLoadInvalidJSON(t *testing.T) {
 	err := os.WriteFile(path, []byte("not json"), 0644)
 	require.NoError(t, err)
 
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	err = s.Load(path)
 	assert.Error(t, err)
 }
@@ -169,7 +173,7 @@ func TestMemStorageSaveProducesValidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "metrics.json")
 
-	s := NewMemStorage()
+	s := NewMemStorage(testLogger)
 	s.SetGauge("Alloc", 1024.0)
 	s.AddCounter("PollCount", 42)
 	err := s.Save(path)
