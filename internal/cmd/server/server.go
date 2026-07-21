@@ -47,18 +47,18 @@ func Run(cfg *config.ServerConfig) error {
 	}
 
 	// печатаем в консоль текущее состояние хранилища (для дебага)
-	wg.Go(func() {
-		ticker := time.NewTicker(storageLogInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				repo.Log()
-			case <-ctx.Done():
-				return
-			}
-		}
-	})
+	// wg.Go(func() {
+	// 	ticker := time.NewTicker(storageLogInterval)
+	// 	defer ticker.Stop()
+	// 	for {
+	// 		select {
+	// 		case <-ticker.C:
+	// 			repo.Log()
+	// 		case <-ctx.Done():
+	// 			return
+	// 		}
+	// 	}
+	// })
 
 	srv := &http.Server{
 		Addr:    cfg.Address,
