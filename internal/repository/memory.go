@@ -116,15 +116,38 @@ func (s *MemStorage) saveLocked(path string) error {
 		metrics = append(metrics, models.Metrics{ID: name, MType: models.Counter, Delta: &d})
 	}
 
-	f, err := os.Create(path)
+	// пишем сначала во временный файл
+	tmpPath := path + ".tmp"
+	f, err := os.Create(tmpPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(metrics)
+
+	// если произошла ошибка при записи, удаляем временный файл и возвращаем ошибку
+	if err := enc.Encode(metrics); err != nil {
+		f.Close()
+		removeFile(tmpPath)
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		removeFile(tmpPath)
+		return fmt.Errorf("close file: %w", err)
+	}
+
+	// переименовываем файл
+	return os.Rename(tmpPath, path)
+}
+
+// removeFile - удаляет файл по заданному пути. Если возникает ошибка,
+// игнорируем её и пишем в error log
+func removeFile(filename string) {
+	if err := os.Remove(filename); err != nil {
+		slog.Error("cannot delete temporary file", "filename", filename, "error", err)
+	}
 }
 
 // Load загружает метрики из JSON-файла в хранилище.
