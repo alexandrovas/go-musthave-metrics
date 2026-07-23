@@ -23,10 +23,12 @@ func cmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
-			if err := cmdHelper.SetupLogger(cfg.Log.Level, string(cfg.Log.Format)); err != nil {
+			logger, err := cmdHelper.NewLogger(cfg.Log.Level, string(cfg.Log.Format))
+			if err != nil {
 				return fmt.Errorf("setup logger: %w", err)
 			}
-			if err := agent.Run(cfg); err != nil {
+			a := agent.New(cfg, logger)
+			if err := a.Run(); err != nil {
 				return err
 			}
 			return nil
@@ -34,9 +36,9 @@ func cmd() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
-	cmd.PersistentFlags().StringP("server_address", "a", "localhost:8080", "server address")
-	cmd.PersistentFlags().VarP(newDurationValue(2*time.Second), "poll_interval", "p", "Metrics poll interval (e.g. 2s or 2)")
-	cmd.PersistentFlags().VarP(newDurationValue(10*time.Second), "report_interval", "r", "Metrics report interval (e.g. 10s or 10)")
+	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server address")
+	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(2*time.Second), "poll_interval", "p", "Metrics poll interval (e.g. 2s or 2)")
+	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(10*time.Second), "report_interval", "r", "Metrics report interval (e.g. 10s or 10)")
 	cmd.PersistentFlags().Uint16P("workers", "w", 5, "Workers count")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")

@@ -1,4 +1,4 @@
-package main
+package helper
 
 import (
 	"testing"
@@ -23,7 +23,7 @@ func TestDurationValueSet(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			d := newDurationValue(0)
+			d := NewDurationValue(0)
 			err := d.Set(tc.input)
 			if tc.wantErr {
 				assert.Error(t, err)
@@ -36,6 +36,6 @@ func TestDurationValueSet(t *testing.T) {
 }
 
 func TestDurationValueString(t *testing.T) {
-	d := newDurationValue(30 * time.Second)
+	d := NewDurationValue(30 * time.Second)
 	assert.Equal(t, "30s", d.String())
 }

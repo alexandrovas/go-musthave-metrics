@@ -3,7 +3,7 @@ package service
 import (
 	"errors"
 
-	models "github.com/alexandrovas/go-musthave-metrics/internal/model"
+	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
 
 var ErrNotFound = errors.New("metric not found")

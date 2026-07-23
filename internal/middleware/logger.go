@@ -6,10 +6,12 @@ import (
 	"time"
 )
 
-// responseWriter оборачивает http.ResponseWriter, чтобы перехватить статус-код ответа.
+// responseWriter оборачивает http.ResponseWriter, чтобы перехватить статус-код
+// и размер тела ответа.
 type responseWriter struct {
 	http.ResponseWriter
 	status int
+	size   int
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -17,28 +19,36 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// Logger логирует каждый HTTP-запрос через slog: метод, путь, статус и время выполнения.
-func Logger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	size, err := rw.ResponseWriter.Write(b)
+	rw.size += size
+	return size, err
+}
 
-		next.ServeHTTP(rw, r)
+// Logger возвращает middleware, логирующую каждый HTTP-запрос.
+func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
-		msg := "request"
-		log := slog.With(
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rw.status,
-			"duration", time.Since(start))
+			next.ServeHTTP(rw, r)
 
-		switch {
-		case rw.status >= 400 && rw.status < 500:
-			log.Debug(msg)
-		case rw.status >= 500:
-			log.Error(msg)
-		default:
-			log.Info(msg)
-		}
-	})
+			log := logger.With(
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.status,
+				"duration", time.Since(start),
+				"size", rw.size)
+
+			switch {
+			case rw.status >= 400 && rw.status < 500:
+				log.Debug("request")
+			case rw.status >= 500:
+				log.Error("request")
+			default:
+				log.Info("request")
+			}
+		})
+	}
 }
