@@ -36,6 +36,7 @@ type ServerConfig struct {
 	StoreInterval   time.Duration `koanf:"store_interval"`
 	FileStoragePath string        `koanf:"file_storage_path"`
 	RestoreState    bool          `koanf:"restore"`
+	DatabaseDSN     string        `koanf:"database_dsn"`
 }
 
 // конфигурация агента

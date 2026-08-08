@@ -41,6 +41,7 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(300*time.Second), "store_interval", "i", "storage save interval (0 - synchronously write)")
 	cmd.PersistentFlags().StringP("file_storage_path", "f", "", "state file storage path")
 	cmd.PersistentFlags().BoolP("restore", "r", false, "restore previosly saved state")
+	cmd.PersistentFlags().StringP("database_dsn", "d", "", "postgres database dsn")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
 

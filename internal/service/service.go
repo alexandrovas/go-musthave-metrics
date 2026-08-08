@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
@@ -15,6 +16,7 @@ type Repository interface {
 	GetCounter(name string) (int64, bool)
 	Gauges() map[string]float64
 	Counters() map[string]int64
+	Ping(ctx context.Context) error
 }
 
 type metricsService struct {
@@ -22,7 +24,9 @@ type metricsService struct {
 }
 
 func NewMetricsService(repo Repository) *metricsService {
-	return &metricsService{repo: repo}
+	return &metricsService{
+		repo: repo,
+	}
 }
 
 func (s *metricsService) UpdateMetric(metric models.Metrics) error {
@@ -64,4 +68,8 @@ func (s *metricsService) GetAllMetrics() []models.Metrics {
 		result = append(result, models.Metrics{ID: name, MType: models.Counter, Delta: &v})
 	}
 	return result
+}
+
+func (s *metricsService) Ping(ctx context.Context) error {
+	return s.repo.Ping(ctx)
 }

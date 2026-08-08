@@ -242,3 +242,15 @@ func formatValue(m models.Metrics) string {
 	}
 	return ""
 }
+
+func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
+	err := h.service.Ping(r.Context())
+	if err != nil {
+		h.logger.Error("ping failed", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte("pong"))
+}

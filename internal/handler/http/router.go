@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -15,6 +16,7 @@ type MetricsService interface {
 	UpdateMetric(metric models.Metrics) error
 	GetMetric(mtype models.MetricType, name string) (models.Metrics, error)
 	GetAllMetrics() []models.Metrics
+	Ping(ctx context.Context) error
 }
 
 func NewRouter(repo service.Repository, logger *slog.Logger) http.Handler {
@@ -31,6 +33,7 @@ func NewRouter(repo service.Repository, logger *slog.Logger) http.Handler {
 	r.With(middleware.RequireContentTypeJson).Post("/value", h.ValueJson)
 	r.With(middleware.RequireContentTypeJson).Post("/value/", h.ValueJson) // для успешного прохождения тестов в Github
 	r.Get("/value/{type}/{name}", h.GetMetric)
+	r.Get("/ping", h.Ping)
 
 	r.Get("/", h.ListMetrics)
 

@@ -220,3 +220,8 @@ func (s *MemStorage) Log() {
 
 	s.logger.Debug("storage state", "gauges", s.gauges, "counters", s.counters)
 }
+
+// Ping всегда возвращает nil — in-memory хранилище недоступным не бывает.
+func (s *MemStorage) Ping(ctx context.Context) error {
+	return nil
+}
