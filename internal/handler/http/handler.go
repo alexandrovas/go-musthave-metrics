@@ -118,6 +118,26 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.UpdateMetric(r.Context(), metric); err != nil {
+		h.logger.Error("update metric error", "error", err)
+		h.writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
+			http.StatusInternalServerError)
+		return
+	}
+
+	// возвращаем пустой JSON в случае успеха
+	h.writeJsonBody(w, make(map[string]interface{}), http.StatusOK)
+}
+
+func (h *Handler) BatchUpdateMeticsJson(w http.ResponseWriter, r *http.Request) {
+	var metrics []models.Metrics
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		h.writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
+			http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.UpdateMetrics(r.Context(), metrics); err != nil {
+		h.logger.Error("update metrics error", "error", err)
 		h.writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
 			http.StatusInternalServerError)
 		return
@@ -155,6 +175,7 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.UpdateMetric(r.Context(), metric); err != nil {
+		h.logger.Error("update metric error", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -179,6 +200,7 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "metric not found", http.StatusNotFound)
 			return
 		}
+		h.logger.Error("get metric error", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}

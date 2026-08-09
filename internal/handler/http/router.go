@@ -14,6 +14,7 @@ import (
 
 type MetricsService interface {
 	UpdateMetric(ctx context.Context, metric models.Metrics) error
+	UpdateMetrics(ctx context.Context, metric []models.Metrics) error
 	GetMetric(ctx context.Context, mtype models.MetricType, name string) (models.Metrics, error)
 	GetAllMetrics(ctx context.Context) ([]models.Metrics, error)
 	Ping(ctx context.Context) error
@@ -28,6 +29,8 @@ func NewRouter(repo service.Repository, logger *slog.Logger) http.Handler {
 
 	r.With(middleware.RequireContentTypeJson).Post("/update", h.UpdateMetricJson)
 	r.With(middleware.RequireContentTypeJson).Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
+	r.With(middleware.RequireContentTypeJson).Post("/updates", h.BatchUpdateMeticsJson)
+	r.With(middleware.RequireContentTypeJson).Post("/updates/", h.BatchUpdateMeticsJson) // для успешного прохождения тестов в Github
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 
 	r.With(middleware.RequireContentTypeJson).Post("/value", h.ValueJson)

@@ -16,6 +16,7 @@ type Repository interface {
 	GetCounter(ctx context.Context, name string) (int64, bool, error)
 	Gauges(ctx context.Context) (map[string]float64, error)
 	Counters(ctx context.Context) (map[string]int64, error)
+	UpdateBatch(ctx context.Context, metric []models.Metrics) error
 	Ping(ctx context.Context) error
 }
 
@@ -27,6 +28,10 @@ func NewMetricsService(repo Repository) *metricsService {
 	return &metricsService{
 		repo: repo,
 	}
+}
+
+func (s *metricsService) UpdateMetrics(ctx context.Context, metric []models.Metrics) error {
+	return s.repo.UpdateBatch(ctx, metric)
 }
 
 func (s *metricsService) UpdateMetric(ctx context.Context, metric models.Metrics) error {

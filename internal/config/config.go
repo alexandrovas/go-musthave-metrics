@@ -46,6 +46,7 @@ type AgentConfig struct {
 	ReportInterval time.Duration `koanf:"report_interval"`
 	Workers        uint16        `koanf:"workers"`
 	Log            LogConfig     `koanf:"log"`
+	BatchMode      bool          `koanf:"batch"`
 }
 
 // durationDecodeHook учит mapstructure понимать голые числа как секунды.

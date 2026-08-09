@@ -117,7 +117,7 @@ func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[str
 		},
 		collector:  &collector{counters: counters, gauges: gauges},
 		httpClient: client,
-		jobs:       make(chan pendingMetric, 64),
+		jobs:       make(chan []pendingMetric, 64),
 		logger:     testLogger,
 	}
 }
@@ -196,7 +196,7 @@ func TestAgentReport(t *testing.T) {
 			a := newTestAgent(t, host, 2, tc.counters, tc.gauges, srv.Client())
 			wg := startWorkers(t, a, 2)
 
-			a.report(t.Context())
+			a.report(t.Context(), false)
 			close(a.jobs)
 			wg.Wait()
 
@@ -262,7 +262,7 @@ func TestAgentReportWorkers(t *testing.T) {
 	a := newTestAgent(t, host, numWorkers, make(map[string]int64), gauges, srv.Client())
 	wg := startWorkers(t, a, numWorkers)
 
-	a.report(t.Context())
+	a.report(t.Context(), false)
 	close(a.jobs)
 	wg.Wait()
 
@@ -342,10 +342,14 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	a := newTestAgent(t, host, 1, map[string]int64{"PollCount": 5}, make(map[string]float64), srv.Client())
+	a := newTestAgent(t, host,
+		1,
+		map[string]int64{"PollCount": 5},
+		make(map[string]float64),
+		srv.Client())
 	wg := startWorkers(t, a, 1)
 
-	a.report(t.Context())
+	a.report(t.Context(), false)
 	close(a.jobs)
 	wg.Wait()
 

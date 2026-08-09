@@ -38,6 +38,22 @@ func (s *MemStorage) EnableSyncSave(path string) {
 	s.syncPath = path
 }
 
+func (s *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, m := range metrics {
+		switch m.MType {
+		case models.Gauge:
+			s.gauges[m.ID] = *m.Value
+		case models.Counter:
+			s.counters[m.ID] += *m.Delta
+		}
+	}
+
+	return nil
+}
+
 func (s *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

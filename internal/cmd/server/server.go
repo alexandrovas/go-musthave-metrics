@@ -60,7 +60,8 @@ func (s *Server) Run() error {
 		}
 		repo = memStore
 	} else {
-		pgStore, err := repository.NewPostgresStorage(ctx, s.logger, s.cfg.DatabaseDSN)
+		pgStore, err := repository.NewPostgresStorage(ctx, s.logger,
+			s.cfg.DatabaseDSN)
 		if err != nil {
 			return fmt.Errorf("connect to database: %w", err)
 		}

@@ -21,7 +21,7 @@ type Agent struct {
 	cfg        *config.AgentConfig
 	collector  *collector
 	httpClient *http.Client
-	jobs       chan pendingMetric
+	jobs       chan []pendingMetric
 	logger     *slog.Logger
 }
 
@@ -35,7 +35,7 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs:   make(chan pendingMetric, cfg.Workers*10),
+		jobs:   make(chan []pendingMetric, cfg.Workers*10),
 		logger: logger,
 	}
 }
@@ -51,6 +51,7 @@ func (a *Agent) Run() error {
 	var wg sync.WaitGroup
 
 	// run multiple workers to push metrics
+	a.logger.Info("Start push workers", "count", a.cfg.Workers)
 	for idx := range a.cfg.Workers {
 		wg.Go(func() {
 			a.runWorker(ctx, idx)
@@ -59,7 +60,7 @@ func (a *Agent) Run() error {
 
 	// run report metrics goroutine
 	wg.Go(func() {
-		a.runReporting(ctx)
+		a.runReporting(ctx, a.cfg.BatchMode)
 	})
 
 	// run poll metrics goroutine
@@ -72,13 +73,13 @@ func (a *Agent) Run() error {
 	return nil
 }
 
-func (a *Agent) runReporting(ctx context.Context) {
+func (a *Agent) runReporting(ctx context.Context, batchMode bool) {
 	timer := time.NewTicker(a.cfg.ReportInterval)
 	a.logger.Debug("Reporting process started...", "interval", a.cfg.ReportInterval)
 	for {
 		select {
 		case <-timer.C:
-			a.report(ctx)
+			a.report(ctx, batchMode)
 			a.logger.Debug("Metrics successfully published")
 		case <-ctx.Done():
 			timer.Stop()
@@ -108,13 +109,29 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 	log := a.logger.With("worker", idx)
 	for {
 		select {
-		case p, ok := <-a.jobs:
-			if !ok {
+		case pms, ok := <-a.jobs:
+			if !ok || len(pms) == 0 {
 				return
 			}
-			if err := a.sendMetric(ctx, p.Metric); err != nil {
-				log.Error("send metric", "type", p.Metric.MType, "name", p.Metric.ID, "error", err)
-				p.Restore()
+			if len(pms) == 1 {
+				if err := a.sendMetric(ctx, pms[0].Metric); err != nil {
+					log.Error("send metric", "type", pms[0].Metric.MType, "name", pms[0].Metric.ID, "error", err)
+					// restore metric state
+					pms[0].Restore()
+				}
+			} else {
+				// in batch mode send all metrics all at once
+				metrics := make([]models.Metrics, len(pms))
+				for i, m := range pms {
+					metrics[i] = m.Metric
+				}
+				if err := a.sendMetricsBatch(ctx, metrics); err != nil {
+					log.Error("send metrics batch", "error", err)
+					// restore metrics state
+					for _, pm := range pms {
+						pm.Restore()
+					}
+				}
 			}
 		case <-ctx.Done():
 			return
@@ -122,28 +139,56 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 	}
 }
 
-func (a *Agent) report(ctx context.Context) {
-	for _, p := range a.collector.collect() {
-		select {
-		case a.jobs <- p:
-		case <-ctx.Done():
-			p.Restore()
-			return
+func (a *Agent) report(ctx context.Context, batchMode bool) {
+	pendingMetrics := a.collector.collect()
+
+	if len(pendingMetrics) > 0 {
+		if batchMode {
+			select {
+			// in batch mode report all metrics all at once
+			case a.jobs <- pendingMetrics:
+			case <-ctx.Done():
+				// restore all metrics state
+				for _, p := range pendingMetrics {
+					p.Restore()
+				}
+				return
+			}
+		} else {
+			for _, p := range pendingMetrics {
+				select {
+				case a.jobs <- []pendingMetric{p}:
+				case <-ctx.Done():
+					p.Restore()
+					return
+				}
+			}
 		}
 	}
+}
+
+func (a *Agent) sendMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(metrics); err != nil {
+		return fmt.Errorf("json encode error: %w", err)
+	}
+	url := fmt.Sprintf("http://%s/updates", a.cfg.ServerAddress)
+	return a.sendData(ctx, url, buf.Bytes())
 }
 
 func (a *Agent) sendMetric(ctx context.Context, metric models.Metrics) error {
-	url := fmt.Sprintf("http://%s/update", a.cfg.ServerAddress)
-
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(metric); err != nil {
 		return fmt.Errorf("json encode error: %w", err)
 	}
+	url := fmt.Sprintf("http://%s/update", a.cfg.ServerAddress)
+	return a.sendData(ctx, url, buf.Bytes())
+}
 
+func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 	var compressed bytes.Buffer
 	gw := gzip.NewWriter(&compressed)
-	if _, err := gw.Write(buf.Bytes()); err != nil {
+	if _, err := gw.Write(data); err != nil {
 		return fmt.Errorf("gzip write error: %w", err)
 	}
 	if err := gw.Close(); err != nil {
