@@ -5,8 +5,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,14 +17,16 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 )
 
 type Agent struct {
-	cfg        *config.AgentConfig
-	collector  *collector
-	httpClient *http.Client
-	jobs       chan []pendingMetric
-	logger     *slog.Logger
+	cfg            *config.AgentConfig
+	collector      *collector
+	httpClient     *http.Client
+	jobs           chan []pendingMetric
+	logger         *slog.Logger
+	retryIntervals []time.Duration
 }
 
 func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
@@ -35,8 +39,9 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs:   make(chan []pendingMetric, cfg.Workers*10),
-		logger: logger,
+		jobs:           make(chan []pendingMetric, cfg.Workers*10),
+		logger:         logger,
+		retryIntervals: retry.Intervals,
 	}
 }
 
@@ -194,23 +199,34 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 	if err := gw.Close(); err != nil {
 		return fmt.Errorf("gzip close error: %w", err)
 	}
+	body := compressed.Bytes()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &compressed)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "gzip")
-	req.Header.Set("Accept-Encoding", "gzip")
+	return retry.Do(ctx, isRetriableSendError, a.retryIntervals, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Encoding", "gzip")
+		req.Header.Set("Accept-Encoding", "gzip")
 
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+		resp, err := a.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %s", resp.Status)
-	}
-	return nil
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status %s", resp.Status)
+		}
+		return nil
+	})
+}
+
+// isRetriableSendError сообщает, стоит ли повторить отправку: временные сетевые
+// ошибки (отказ в соединении, таймаут, DNS) считаются повторяемыми, ответ сервера
+// с неуспешным статусом — нет, повтор не решит проблему валидации/данных.
+func isRetriableSendError(err error) bool {
+	_, ok := errors.AsType[net.Error](err)
+	return ok
 }

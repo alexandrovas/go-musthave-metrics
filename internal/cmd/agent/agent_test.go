@@ -3,13 +3,16 @@ package agent
 import (
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -358,4 +361,82 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	got := a.collector.counters["PollCount"]
 	a.collector.Unlock()
 	assert.Equal(t, int64(5), got)
+}
+
+// --- retry tests ---
+
+func TestIsRetriableSendError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"connection refused (net.OpError)", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
+		{"business error (non-200 status)", fmt.Errorf("unexpected status %s", "500 Internal Server Error"), false},
+		{"json encode error", fmt.Errorf("json encode error: %w", errors.New("boom")), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isRetriableSendError(tc.err))
+		})
+	}
+}
+
+// TestAgentReportDoesNotRetryOnBusinessError убеждается, что при неуспешном
+// HTTP-статусе (не проблема соединения) агент не выполняет дополнительных
+// попыток — retryIntervals заведомо большие, но тест должен завершиться быстро.
+func TestAgentReportDoesNotRetryOnBusinessError(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attempts, 1)
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := newTestAgent(t, host, 1, map[string]int64{"PollCount": 5}, make(map[string]float64), srv.Client())
+	a.retryIntervals = []time.Duration{time.Minute, time.Minute, time.Minute} // огромные — тест зависнет, если retry сработает
+
+	err := a.sendMetric(t.Context(), models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))})
+	assert.Error(t, err)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "non-connection errors must not be retried")
+}
+
+// TestSendDataRetriesOnConnectionRefused проверяет полный retry-путь: агент не
+// может установить соединение (никто не слушает адрес), несколько попыток
+// проваливаются, а как только сервер поднимается — очередная попытка успешна.
+func TestSendDataRetriesOnConnectionRefused(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close()) // освобождаем порт — пока никто не слушает
+
+	var received int32
+	go func() {
+		time.Sleep(15 * time.Millisecond) // даём агенту сделать пару неудачных попыток
+		ln2, err := net.Listen("tcp", addr)
+		if err != nil {
+			return
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&received, 1)
+			w.WriteHeader(http.StatusOK)
+		})
+		httpSrv := &http.Server{Handler: mux}
+		t.Cleanup(func() { httpSrv.Close() })
+		_ = httpSrv.Serve(ln2)
+	}()
+
+	a := &Agent{
+		cfg:            &config.AgentConfig{ServerAddress: addr},
+		httpClient:     http.DefaultClient,
+		logger:         testLogger,
+		retryIntervals: []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 50 * time.Millisecond},
+	}
+
+	err = a.sendMetric(t.Context(), models.Metrics{ID: "x", MType: models.Counter, Delta: ptr(int64(1))})
+	require.NoError(t, err, "should eventually succeed once the server starts listening")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&received))
 }

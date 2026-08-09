@@ -7,12 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 	"github.com/golang-migrate/migrate/v4"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	// Register pgx as the database/sql driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -54,37 +58,63 @@ func (s *PostgresStorage) Close() {
 	s.db.Close()
 }
 
-func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+// isRetriableDBError сообщает, стоит ли повторить операцию с БД
+func isRetriableDBError(err error) bool {
+	if err == nil {
+		return false
 	}
-	defer tx.Rollback()
 
-	for _, m := range metrics {
-		switch m.MType {
-		case models.Gauge:
-			err := s.setGauge(ctx, m.ID, *m.Value, tx)
-			if err != nil {
-				return err
-			}
-		case models.Counter:
-			err := s.addCounter(ctx, m.ID, *m.Delta, tx)
-			if err != nil {
-				return err
-			}
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
+		// условия взяты из урока "Интроспекция ошибок"
+		if pgerrcode.IsConnectionException(pgErr.Code) ||
+			pgerrcode.IsTransactionRollback(pgErr.Code) ||
+			pgerrcode.IsInsufficientResources(pgErr.Code) {
+			return true
 		}
+		if pgErr.Code == pgerrcode.CannotConnectNow {
+			return true
+		}
+		return false
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-	return nil
+	_, ok := errors.AsType[net.Error](err)
+	return ok
+}
+
+func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			tx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("begin transaction: %w", err)
+			}
+			defer tx.Rollback()
+
+			for _, m := range metrics {
+				switch m.MType {
+				case models.Gauge:
+					if err := s.setGauge(ctx, m.ID, *m.Value, tx); err != nil {
+						return err
+					}
+				case models.Counter:
+					if err := s.addCounter(ctx, m.ID, *m.Delta, tx); err != nil {
+						return err
+					}
+				}
+			}
+
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("commit transaction: %w", err)
+			}
+			return nil
+		})
 }
 
 func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float64) error {
-	return s.setGauge(ctx, name, value, nil)
+	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			return s.setGauge(ctx, name, value, nil)
+		})
 }
 
 func (s *PostgresStorage) setGauge(ctx context.Context, name string, value float64, tx *sql.Tx) error {
@@ -104,19 +134,34 @@ func (s *PostgresStorage) setGauge(ctx context.Context, name string, value float
 }
 
 func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
-	const q = `SELECT value FROM gauges WHERE id = $1`
 	var v float64
-	if err := s.db.QueryRowContext(ctx, q, name).Scan(&v); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
-		}
+	var ok bool
+	err := retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			const q = `SELECT value FROM gauges WHERE id = $1`
+			scanErr := s.db.QueryRowContext(ctx, q, name).Scan(&v)
+			switch {
+			case scanErr == nil:
+				ok = true
+				return nil
+			case errors.Is(scanErr, sql.ErrNoRows):
+				ok = false
+				return nil
+			default:
+				return scanErr
+			}
+		})
+	if err != nil {
 		return 0, false, fmt.Errorf("get gauge %q: %w", name, err)
 	}
-	return v, true, nil
+	return v, ok, nil
 }
 
 func (s *PostgresStorage) AddCounter(ctx context.Context, name string, delta int64) error {
-	return s.addCounter(ctx, name, delta, nil)
+	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			return s.addCounter(ctx, name, delta, nil)
+		})
 }
 
 func (s *PostgresStorage) addCounter(ctx context.Context, name string, delta int64, tx *sql.Tx) error {
@@ -136,58 +181,80 @@ func (s *PostgresStorage) addCounter(ctx context.Context, name string, delta int
 }
 
 func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
-	const q = `SELECT delta FROM counters WHERE id = $1`
 	var d int64
-	if err := s.db.QueryRowContext(ctx, q, name).Scan(&d); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
-		}
+	var ok bool
+	err := retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			const q = `SELECT delta FROM counters WHERE id = $1`
+			scanErr := s.db.QueryRowContext(ctx, q, name).Scan(&d)
+			switch {
+			case scanErr == nil:
+				ok = true
+				return nil
+			case errors.Is(scanErr, sql.ErrNoRows):
+				ok = false
+				return nil
+			default:
+				return scanErr
+			}
+		})
+	if err != nil {
 		return 0, false, fmt.Errorf("get counter %q: %w", name, err)
 	}
-	return d, true, nil
+	return d, ok, nil
 }
 
 func (s *PostgresStorage) Gauges(ctx context.Context) (map[string]float64, error) {
-	const q = `SELECT id, value FROM gauges`
-	rows, err := s.db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("list gauges: %w", err)
-	}
-	defer rows.Close()
-
 	result := make(map[string]float64)
-	for rows.Next() {
-		var id string
-		var v float64
-		if err := rows.Scan(&id, &v); err != nil {
-			return nil, fmt.Errorf("scan gauge row: %w", err)
-		}
-		result[id] = v
-	}
-	if err := rows.Err(); err != nil {
+	err := retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			const q = `SELECT id, value FROM gauges`
+			rows, err := s.db.QueryContext(ctx, q)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+
+			clear(result) // на случай повторной попытки после частично прочитанного результата
+			for rows.Next() {
+				var id string
+				var v float64
+				if err := rows.Scan(&id, &v); err != nil {
+					return err
+				}
+				result[id] = v
+			}
+			return rows.Err()
+		})
+	if err != nil {
 		return nil, fmt.Errorf("list gauges: %w", err)
 	}
 	return result, nil
 }
 
 func (s *PostgresStorage) Counters(ctx context.Context) (map[string]int64, error) {
-	const q = `SELECT id, delta FROM counters`
-	rows, err := s.db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("list counters: %w", err)
-	}
-	defer rows.Close()
-
 	result := make(map[string]int64)
-	for rows.Next() {
-		var id string
-		var d int64
-		if err := rows.Scan(&id, &d); err != nil {
-			return nil, fmt.Errorf("scan counter row: %w", err)
-		}
-		result[id] = d
-	}
-	if err := rows.Err(); err != nil {
+	err := retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			const q = `SELECT id, delta FROM counters`
+			rows, err := s.db.QueryContext(ctx, q)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+
+			clear(result)
+			for rows.Next() {
+				var id string
+				var d int64
+				if err := rows.Scan(&id, &d); err != nil {
+					return err
+				}
+				result[id] = d
+			}
+			return rows.Err()
+		})
+	if err != nil {
 		return nil, fmt.Errorf("list counters: %w", err)
 	}
 	return result, nil
@@ -195,9 +262,12 @@ func (s *PostgresStorage) Counters(ctx context.Context) (map[string]int64, error
 
 // Ping проверяет доступность базы данных.
 func (s *PostgresStorage) Ping(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	return s.db.PingContext(ctx)
+	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
+		func() error {
+			pingCtx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			return s.db.PingContext(pingCtx)
+		})
 }
 
 // migrate накатывает все непримененные миграции из каталога `migrations/postgres“.
