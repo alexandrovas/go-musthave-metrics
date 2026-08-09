@@ -13,9 +13,9 @@ import (
 )
 
 type MetricsService interface {
-	UpdateMetric(metric models.Metrics) error
-	GetMetric(mtype models.MetricType, name string) (models.Metrics, error)
-	GetAllMetrics() []models.Metrics
+	UpdateMetric(ctx context.Context, metric models.Metrics) error
+	GetMetric(ctx context.Context, mtype models.MetricType, name string) (models.Metrics, error)
+	GetAllMetrics(ctx context.Context) ([]models.Metrics, error)
 	Ping(ctx context.Context) error
 }
 

@@ -62,7 +62,7 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 
 	switch metric.MType {
 	case models.Gauge, models.Counter:
-		metric, err := h.service.GetMetric(metric.MType, metric.ID)
+		metric, err := h.service.GetMetric(r.Context(), metric.MType, metric.ID)
 		if err != nil {
 			if errors.Is(err, service.ErrNotFound) {
 				h.writeJsonBody(w, models.ErrorResponse{Error: service.ErrNotFound},
@@ -117,7 +117,7 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.UpdateMetric(metric); err != nil {
+	if err := h.service.UpdateMetric(r.Context(), metric); err != nil {
 		h.writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
 			http.StatusInternalServerError)
 		return
@@ -154,7 +154,7 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.service.UpdateMetric(metric); err != nil {
+	if err := h.service.UpdateMetric(r.Context(), metric); err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -173,7 +173,7 @@ func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metric, err := h.service.GetMetric(mtype, name)
+	metric, err := h.service.GetMetric(r.Context(), mtype, name)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) {
 			http.Error(w, "metric not found", http.StatusNotFound)
@@ -209,7 +209,12 @@ const metricsPageHTML = `<!DOCTYPE html>
 var metricsPageTmpl = template.Must(template.New("metrics").Parse(metricsPageHTML))
 
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics := h.service.GetAllMetrics()
+	metrics, err := h.service.GetAllMetrics(r.Context())
+	if err != nil {
+		h.logger.Error("list metrics error", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	sort.Slice(metrics, func(i, j int) bool {
 		if metrics[i].MType != metrics[j].MType {

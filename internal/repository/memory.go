@@ -38,7 +38,7 @@ func (s *MemStorage) EnableSyncSave(path string) {
 	s.syncPath = path
 }
 
-func (s *MemStorage) SetGauge(name string, value float64) {
+func (s *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,17 +49,18 @@ func (s *MemStorage) SetGauge(name string, value float64) {
 			s.logger.Error("sync save after SetGauge", "error", err)
 		}
 	}
+	return nil
 }
 
-func (s *MemStorage) GetGauge(name string) (float64, bool) {
+func (s *MemStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	v, ok := s.gauges[name]
-	return v, ok
+	return v, ok, nil
 }
 
-func (s *MemStorage) AddCounter(name string, delta int64) {
+func (s *MemStorage) AddCounter(ctx context.Context, name string, delta int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -70,34 +71,35 @@ func (s *MemStorage) AddCounter(name string, delta int64) {
 			s.logger.Error("sync save after AddCounter", "error", err)
 		}
 	}
+	return nil
 }
 
-func (s *MemStorage) GetCounter(name string) (int64, bool) {
+func (s *MemStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	v, ok := s.counters[name]
-	return v, ok
+	return v, ok, nil
 }
 
 // Gauges возвращает копию всех gauge-метрик.
-func (s *MemStorage) Gauges() map[string]float64 {
+func (s *MemStorage) Gauges(ctx context.Context) (map[string]float64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	cp := make(map[string]float64, len(s.gauges))
 	maps.Copy(cp, s.gauges)
-	return cp
+	return cp, nil
 }
 
 // Counters возвращает копию всех counter-метрик.
-func (s *MemStorage) Counters() map[string]int64 {
+func (s *MemStorage) Counters(ctx context.Context) (map[string]int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	cp := make(map[string]int64, len(s.counters))
 	maps.Copy(cp, s.counters)
-	return cp
+	return cp, nil
 }
 
 // Save сериализует все метрики в JSON-файл. Запись атомарная: сначала пишем
