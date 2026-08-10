@@ -36,7 +36,6 @@ type PostgresStorage struct {
 func NewPostgresStorage(ctx context.Context, logger *slog.Logger, dsn string) (*PostgresStorage, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		db.Close()
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
