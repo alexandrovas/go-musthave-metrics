@@ -115,12 +115,14 @@ func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[str
 	t.Helper()
 	return &Agent{
 		cfg: &config.AgentConfig{
-			ServerAddress: host,
-			Workers:       numWorkers,
+			ServerAddress:  host,
+			Workers:        numWorkers,
+			PollInterval:   time.Second * 3,
+			ReportInterval: time.Second * 1,
 		},
 		collector:  &collector{counters: counters, gauges: gauges},
 		httpClient: client,
-		jobs:       make(chan []pendingMetric, 64),
+		jobs:       make(chan job, 64),
 		logger:     testLogger,
 	}
 }

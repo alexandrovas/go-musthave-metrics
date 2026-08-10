@@ -22,7 +22,8 @@ type IsRetriable func(err error) bool
 // полученную ошибку, если все попытки исчерпаны или ошибка не retriable.
 // Если ctx отменяется во время ожидания между попытками, Do прерывается и
 // возвращает ctx.Err().
-func Do(ctx context.Context, isRetriable IsRetriable, intervals []time.Duration, fn func() error) error {
+func Do(ctx context.Context, isRetriable IsRetriable, intervals []time.Duration,
+	fn func() error) error {
 	err := fn()
 	if err == nil || !isRetriable(err) {
 		return err

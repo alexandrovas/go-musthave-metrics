@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,11 +21,24 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 )
 
+// job — единица работы воркера: одна метрика (batch=false) либо весь батч,
+// собранный за один цикл report (batch=true). deadline общий для всех job,
+// отправленных в рамках одного цикла report — это ограничивает суммарное
+// время, которое агент готов потратить на доставку метрик этого цикла
+// (включая все ретраи), независимо от того, сколько отдельных job из него
+// получилось. Без этого в режиме batch=false ретраи по 1s/3s/5s для КАЖДОЙ
+// метрики по отдельности могли бы суммарно растягиваться на неопределённо
+// долгое время, если сервер недоступен.
+type job struct {
+	metrics  []pendingMetric
+	deadline time.Time
+}
+
 type Agent struct {
 	cfg            *config.AgentConfig
 	collector      *collector
 	httpClient     *http.Client
-	jobs           chan []pendingMetric
+	jobs           chan job
 	logger         *slog.Logger
 	retryIntervals []time.Duration
 }
@@ -39,7 +53,7 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs:           make(chan []pendingMetric, cfg.Workers*10),
+		jobs:           make(chan job, cfg.Workers*10),
 		logger:         logger,
 		retryIntervals: retry.Intervals,
 	}
@@ -85,7 +99,6 @@ func (a *Agent) runReporting(ctx context.Context, batchMode bool) {
 		select {
 		case <-timer.C:
 			a.report(ctx, batchMode)
-			a.logger.Debug("Metrics successfully published")
 		case <-ctx.Done():
 			timer.Stop()
 			a.logger.Debug("Reporting stopped")
@@ -114,30 +127,36 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 	log := a.logger.With("worker", idx)
 	for {
 		select {
-		case pms, ok := <-a.jobs:
-			if !ok || len(pms) == 0 {
+		case j, ok := <-a.jobs:
+			if !ok || len(j.metrics) == 0 {
 				return
 			}
-			if len(pms) == 1 {
-				if err := a.sendMetric(ctx, pms[0].Metric); err != nil {
-					log.Error("send metric", "type", pms[0].Metric.MType, "name", pms[0].Metric.ID, "error", err)
-					// restore metric state
-					pms[0].Restore()
+
+			sendCtx, cancel := context.WithDeadline(ctx, j.deadline)
+
+			if len(j.metrics) == 1 {
+				if err := a.sendMetric(sendCtx, j.metrics[0].Metric); err != nil {
+					log.Error("send metric",
+						"type", j.metrics[0].Metric.MType,
+						"name", j.metrics[0].Metric.ID,
+						"error", err)
+					j.metrics[0].Restore()
 				}
 			} else {
 				// in batch mode send all metrics all at once
-				metrics := make([]models.Metrics, len(pms))
-				for i, m := range pms {
+				metrics := make([]models.Metrics, len(j.metrics))
+				for i, m := range j.metrics {
 					metrics[i] = m.Metric
 				}
-				if err := a.sendMetricsBatch(ctx, metrics); err != nil {
+				if err := a.sendMetricsBatch(sendCtx, metrics); err != nil {
 					log.Error("send metrics batch", "error", err)
-					// restore metrics state
-					for _, pm := range pms {
+					for _, pm := range j.metrics {
 						pm.Restore()
 					}
 				}
 			}
+
+			cancel()
 		case <-ctx.Done():
 			return
 		}
@@ -146,30 +165,44 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 
 func (a *Agent) report(ctx context.Context, batchMode bool) {
 	pendingMetrics := a.collector.collect()
+	if len(pendingMetrics) == 0 {
+		return
+	}
 
-	if len(pendingMetrics) > 0 {
-		if batchMode {
-			select {
-			// in batch mode report all metrics all at once
-			case a.jobs <- pendingMetrics:
-			case <-ctx.Done():
-				// restore all metrics state
-				for _, p := range pendingMetrics {
-					p.Restore()
-				}
-				return
-			}
-		} else {
+	// Используем ReportInterval как deadline
+	// на отправку одного полного списка метрик.
+	// Если отправка метрик за отведенное время не удалась, то отменяем
+	// отправку и начинаем новый цикл.
+	deadline := time.Now().Add(a.cfg.ReportInterval)
+
+	if batchMode {
+		select {
+		// in batch mode report all metrics all at once
+		case a.jobs <- job{
+			metrics:  pendingMetrics,
+			deadline: deadline,
+		}:
+		case <-ctx.Done():
+			// restore all metrics state
 			for _, p := range pendingMetrics {
-				select {
-				case a.jobs <- []pendingMetric{p}:
-				case <-ctx.Done():
-					p.Restore()
-					return
-				}
+				p.Restore()
+			}
+		}
+	} else {
+		for _, p := range pendingMetrics {
+			select {
+			case a.jobs <- job{
+				metrics:  []pendingMetric{p},
+				deadline: deadline,
+			}:
+			case <-ctx.Done():
+				p.Restore()
+				return
 			}
 		}
 	}
+
+	a.logger.Debug("Metrics successfully scheduled to send")
 }
 
 func (a *Agent) sendMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
@@ -201,25 +234,35 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 	}
 	body := compressed.Bytes()
 
-	return retry.Do(ctx, isRetriableSendError, a.retryIntervals, func() error {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Content-Encoding", "gzip")
-		req.Header.Set("Accept-Encoding", "gzip")
+	return retry.Do(ctx, isRetriableSendError, a.retryIntervals,
+		func() error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Encoding", "gzip")
+			req.Header.Set("Accept-Encoding", "gzip")
 
-		resp, err := a.httpClient.Do(req)
-		if err != nil {
-			return err
-		}
+			resp, err := a.httpClient.Do(req)
+			if err != nil {
+				a.logger.Warn("failed to send request", "error", err)
+				return err
+			}
+			defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status %s", resp.Status)
-		}
-		return nil
-	})
+			_, err = io.ReadAll(resp.Body)
+			if err != nil {
+				a.logger.Warn("failed to send request", "error", err)
+				return fmt.Errorf("failed to read body: %w", err)
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				a.logger.Warn("bad status code from server", "error", err, "statusCode", resp.StatusCode)
+				return fmt.Errorf("unexpected status %s", resp.Status)
+			}
+			return nil
+		})
 }
 
 // isRetriableSendError сообщает, стоит ли повторить отправку: временные сетевые
