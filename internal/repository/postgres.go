@@ -81,6 +81,10 @@ func isRetriableDBError(err error) bool {
 }
 
 func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
 	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
 		func() error {
 			tx, err := s.db.BeginTx(ctx, nil)
