@@ -31,9 +31,10 @@ func TestMemStorageGauge(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewMemStorage(testLogger)
 			for _, v := range tc.values {
-				s.SetGauge("Alloc", v)
+				require.NoError(t, s.SetGauge(t.Context(), "Alloc", v))
 			}
-			got, ok := s.GetGauge("Alloc")
+			got, ok, err := s.GetGauge(t.Context(), "Alloc")
+			require.NoError(t, err)
 			require.True(t, ok)
 			assert.Equal(t, tc.want, got)
 		})
@@ -42,7 +43,8 @@ func TestMemStorageGauge(t *testing.T) {
 
 func TestMemStorageGaugeNotFound(t *testing.T) {
 	s := NewMemStorage(testLogger)
-	_, ok := s.GetGauge("NonExistent")
+	_, ok, err := s.GetGauge(t.Context(), "NonExistent")
+	require.NoError(t, err)
 	assert.False(t, ok)
 }
 
@@ -61,9 +63,10 @@ func TestMemStorageCounter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewMemStorage(testLogger)
 			for _, d := range tc.deltas {
-				s.AddCounter("PollCount", d)
+				require.NoError(t, s.AddCounter(t.Context(), "PollCount", d))
 			}
-			got, ok := s.GetCounter("PollCount")
+			got, ok, err := s.GetCounter(t.Context(), "PollCount")
+			require.NoError(t, err)
 			require.True(t, ok)
 			assert.Equal(t, tc.want, got)
 		})
@@ -72,34 +75,39 @@ func TestMemStorageCounter(t *testing.T) {
 
 func TestMemStorageCounterNotFound(t *testing.T) {
 	s := NewMemStorage(testLogger)
-	_, ok := s.GetCounter("NonExistent")
+	_, ok, err := s.GetCounter(t.Context(), "NonExistent")
+	require.NoError(t, err)
 	assert.False(t, ok)
 }
 
 func TestMemStorageAll(t *testing.T) {
 	s := NewMemStorage(testLogger)
-	s.SetGauge("Alloc", 1024)
-	s.SetGauge("Sys", 4096)
-	s.AddCounter("PollCount", 7)
+	require.NoError(t, s.SetGauge(t.Context(), "Alloc", 1024))
+	require.NoError(t, s.SetGauge(t.Context(), "Sys", 4096))
+	require.NoError(t, s.AddCounter(t.Context(), "PollCount", 7))
 
-	gauges := s.Gauges()
+	gauges, err := s.Gauges(t.Context())
+	require.NoError(t, err)
 	assert.Equal(t, 1024.0, gauges["Alloc"])
 	assert.Equal(t, 4096.0, gauges["Sys"])
 	assert.Len(t, gauges, 2)
 
-	counters := s.Counters()
+	counters, err := s.Counters(t.Context())
+	require.NoError(t, err)
 	assert.Equal(t, int64(7), counters["PollCount"])
 	assert.Len(t, counters, 1)
 }
 
 func TestMemStorageGaugesCopy(t *testing.T) {
 	s := NewMemStorage(testLogger)
-	s.SetGauge("X", 1)
+	require.NoError(t, s.SetGauge(t.Context(), "X", 1))
 
-	cp := s.Gauges()
+	cp, err := s.Gauges(t.Context())
+	require.NoError(t, err)
 	cp["X"] = 999 // изменяем копию
 
-	got, _ := s.GetGauge("X")
+	got, _, err := s.GetGauge(t.Context(), "X")
+	require.NoError(t, err)
 	assert.Equal(t, 1.0, got, "modifying copy must not affect storage")
 }
 
@@ -110,10 +118,10 @@ func TestMemStorageSaveLoad(t *testing.T) {
 	path := filepath.Join(dir, "metrics.json")
 
 	src := NewMemStorage(testLogger)
-	src.SetGauge("Alloc", 1024.0)
-	src.SetGauge("Sys", 4096.0)
-	src.AddCounter("PollCount", 7)
-	src.AddCounter("PollCount", 3)
+	require.NoError(t, src.SetGauge(t.Context(), "Alloc", 1024.0))
+	require.NoError(t, src.SetGauge(t.Context(), "Sys", 4096.0))
+	require.NoError(t, src.AddCounter(t.Context(), "PollCount", 7))
+	require.NoError(t, src.AddCounter(t.Context(), "PollCount", 3))
 
 	err := src.Save(path)
 	require.NoError(t, err)
@@ -122,15 +130,18 @@ func TestMemStorageSaveLoad(t *testing.T) {
 	err = dst.Load(path)
 	require.NoError(t, err)
 
-	v, ok := dst.GetGauge("Alloc")
+	v, ok, err := dst.GetGauge(t.Context(), "Alloc")
+	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 1024.0, v)
 
-	v, ok = dst.GetGauge("Sys")
+	v, ok, err = dst.GetGauge(t.Context(), "Sys")
+	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 4096.0, v)
 
-	d, ok := dst.GetCounter("PollCount")
+	d, ok, err := dst.GetCounter(t.Context(), "PollCount")
+	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, int64(10), d)
 }
@@ -153,8 +164,13 @@ func TestMemStorageSaveEmpty(t *testing.T) {
 	err = dst.Load(path)
 	require.NoError(t, err)
 
-	assert.Len(t, dst.Gauges(), 0)
-	assert.Len(t, dst.Counters(), 0)
+	gauges, err := dst.Gauges(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, gauges, 0)
+
+	counters, err := dst.Counters(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, counters, 0)
 }
 
 func TestMemStorageLoadInvalidJSON(t *testing.T) {
@@ -174,8 +190,8 @@ func TestMemStorageSaveProducesValidJSON(t *testing.T) {
 	path := filepath.Join(dir, "metrics.json")
 
 	s := NewMemStorage(testLogger)
-	s.SetGauge("Alloc", 1024.0)
-	s.AddCounter("PollCount", 42)
+	require.NoError(t, s.SetGauge(t.Context(), "Alloc", 1024.0))
+	require.NoError(t, s.AddCounter(t.Context(), "PollCount", 42))
 	err := s.Save(path)
 	require.NoError(t, err)
 

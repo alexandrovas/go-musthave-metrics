@@ -13,6 +13,7 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	handlerHttp "github.com/alexandrovas/go-musthave-metrics/internal/handler/http"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
+	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
 type Server struct {
@@ -28,31 +29,44 @@ func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 }
 
 func (s *Server) Run() error {
-	repo := repository.NewMemStorage(s.logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	var wg sync.WaitGroup
 
-	if s.cfg.FileStoragePath != "" {
+	var repo service.Repository
+	if s.cfg.DatabaseDSN == "" {
+		memStore := repository.NewMemStorage(s.logger)
 
-		// Восстановление состояния из файла при старте
-		if s.cfg.RestoreState {
-			if err := repo.Load(s.cfg.FileStoragePath); err != nil {
-				return fmt.Errorf("cannot restore state: %w", err)
+		if s.cfg.FileStoragePath != "" {
+
+			// Восстановление состояния из файла при старте
+			if s.cfg.RestoreState {
+				if err := memStore.Load(s.cfg.FileStoragePath); err != nil {
+					return fmt.Errorf("cannot restore state: %w", err)
+				}
+				s.logger.Info("state restored from file", "path", s.cfg.FileStoragePath)
 			}
-			s.logger.Info("state restored from file", "path", s.cfg.FileStoragePath)
-		}
 
-		// Настройка сохранения: синхронное (интервал == 0) или периодическое
-		if s.cfg.StoreInterval == 0 {
-			repo.EnableSyncSave(s.cfg.FileStoragePath)
-		} else {
-			wg.Go(func() {
-				repo.RunPeriodicSave(ctx, s.cfg.FileStoragePath, s.cfg.StoreInterval)
-			})
+			// Настройка сохранения: синхронное (интервал == 0) или периодическое
+			if s.cfg.StoreInterval == 0 {
+				memStore.EnableSyncSave(s.cfg.FileStoragePath)
+			} else {
+				wg.Go(func() {
+					memStore.RunPeriodicSave(ctx, s.cfg.FileStoragePath, s.cfg.StoreInterval)
+				})
+			}
 		}
+		repo = memStore
+	} else {
+		pgStore, err := repository.NewPostgresStorage(ctx, s.logger,
+			s.cfg.DatabaseDSN)
+		if err != nil {
+			return fmt.Errorf("connect to database: %w", err)
+		}
+		defer pgStore.Close()
+		repo = pgStore
 	}
 
 	// печатаем в консоль текущее состояние хранилища (для дебага)

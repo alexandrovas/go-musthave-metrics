@@ -170,7 +170,7 @@ func TestListMetrics(t *testing.T) {
 
 func TestListMetricsEscapesHTML(t *testing.T) {
 	repo := repository.NewMemStorage(testLogger)
-	repo.SetGauge(`<script>alert(1)</script>`, 42)
+	require.NoError(t, repo.SetGauge(t.Context(), `<script>alert(1)</script>`, 42))
 
 	srv := httptest.NewServer(NewRouter(repo, testLogger))
 	defer srv.Close()

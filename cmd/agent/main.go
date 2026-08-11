@@ -42,6 +42,7 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().Uint16P("workers", "w", 5, "Workers count")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
+	cmd.PersistentFlags().BoolP("batch", "", true, "enable batch mode")
 
 	return cmd
 }

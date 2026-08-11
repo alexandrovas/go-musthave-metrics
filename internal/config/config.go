@@ -36,6 +36,7 @@ type ServerConfig struct {
 	StoreInterval   time.Duration `koanf:"store_interval"`
 	FileStoragePath string        `koanf:"file_storage_path"`
 	RestoreState    bool          `koanf:"restore"`
+	DatabaseDSN     string        `koanf:"database_dsn"`
 }
 
 // конфигурация агента
@@ -45,6 +46,7 @@ type AgentConfig struct {
 	ReportInterval time.Duration `koanf:"report_interval"`
 	Workers        uint16        `koanf:"workers"`
 	Log            LogConfig     `koanf:"log"`
+	BatchMode      bool          `koanf:"batch"`
 }
 
 // durationDecodeHook учит mapstructure понимать голые числа как секунды.
