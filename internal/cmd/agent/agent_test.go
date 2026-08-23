@@ -18,6 +18,7 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -441,4 +442,57 @@ func TestSendDataRetriesOnConnectionRefused(t *testing.T) {
 	err = a.sendMetric(t.Context(), models.Metrics{ID: "x", MType: models.Counter, Delta: ptr(int64(1))})
 	require.NoError(t, err, "should eventually succeed once the server starts listening")
 	assert.Equal(t, int32(1), atomic.LoadInt32(&received))
+}
+
+// --- signing tests ---
+
+func TestSendMetricSetsHashHeaderWhenKeyConfigured(t *testing.T) {
+	var gotHash string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHash = r.Header.Get(hashHeader)
+		zr, err := gzip.NewReader(r.Body)
+		require.NoError(t, err)
+		defer zr.Close()
+		gotBody, err = io.ReadAll(zr)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := &Agent{
+		cfg:        &config.AgentConfig{ServerAddress: host, Key: "secret"},
+		httpClient: srv.Client(),
+		logger:     testLogger,
+	}
+
+	metric := models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}
+	require.NoError(t, a.sendMetric(t.Context(), metric))
+
+	require.NotEmpty(t, gotHash)
+	assert.Equal(t, sign.Compute(gotBody, "secret"), gotHash)
+}
+
+func TestSendMetricOmitsHashHeaderWhenNoKey(t *testing.T) {
+	var gotHash string
+	sawHeader := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHash, sawHeader = r.Header.Get(hashHeader), r.Header.Get(hashHeader) != ""
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := &Agent{
+		cfg:        &config.AgentConfig{ServerAddress: host},
+		httpClient: srv.Client(),
+		logger:     testLogger,
+	}
+
+	metric := models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}
+	require.NoError(t, a.sendMetric(t.Context(), metric))
+
+	assert.False(t, sawHeader, "no key configured — request must not carry a hash header")
+	assert.Empty(t, gotHash)
 }

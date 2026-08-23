@@ -20,18 +20,27 @@ type MetricsService interface {
 	Ping(ctx context.Context) error
 }
 
-func NewRouter(repo service.Repository, logger *slog.Logger) http.Handler {
+func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string) http.Handler {
 	svc := service.NewMetricsService(repo)
 	h := NewHandler(svc, logger)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger(logger), middleware.Compression)
+	r.Use(
+		middleware.Logger(logger),
+		middleware.Compression,
+		middleware.SignResponse(hashKey),
+	)
 
-	r.With(middleware.RequireContentTypeJson).Post("/update", h.UpdateMetricJson)
-	r.With(middleware.RequireContentTypeJson).Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
-	r.With(middleware.RequireContentTypeJson).Post("/updates", h.BatchUpdateMeticsJson)
-	r.With(middleware.RequireContentTypeJson).Post("/updates/", h.BatchUpdateMeticsJson) // для успешного прохождения тестов в Github
-	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
+	// Проверка подписи запроса нужна только там, где есть смысловое тело
+	// (POST) — на GET-эндпоинтах она не выполняется, ответ при этом всё
+	// равно подписывается через глобальный SignResponse.
+	validateSign := middleware.ValidateSignature(hashKey)
+
+	r.With(middleware.RequireContentTypeJson, validateSign).Post("/update", h.UpdateMetricJson)
+	r.With(middleware.RequireContentTypeJson, validateSign).Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
+	r.With(middleware.RequireContentTypeJson, validateSign).Post("/updates", h.BatchUpdateMeticsJson)
+	r.With(middleware.RequireContentTypeJson, validateSign).Post("/updates/", h.BatchUpdateMeticsJson) // для успешного прохождения тестов в Github
+	r.With(validateSign).Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 
 	r.With(middleware.RequireContentTypeJson).Post("/value", h.ValueJson)
 	r.With(middleware.RequireContentTypeJson).Post("/value/", h.ValueJson) // для успешного прохождения тестов в Github

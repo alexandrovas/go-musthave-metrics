@@ -19,6 +19,7 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
+	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 )
 
 // job — единица работы воркера: одна метрика (batch=false) либо весь батч,
@@ -223,6 +224,8 @@ func (a *Agent) sendMetric(ctx context.Context, metric models.Metrics) error {
 	return a.sendData(ctx, url, buf.Bytes())
 }
 
+const hashHeader = "HashSHA256"
+
 func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 	var compressed bytes.Buffer
 	gw := gzip.NewWriter(&compressed)
@@ -234,6 +237,13 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 	}
 	body := compressed.Bytes()
 
+	// Хеш считается от исходных (несжатых) данных — именно их сервер увидит
+	// после декомпрессии тела запроса.
+	var hash string
+	if a.cfg.Key != "" {
+		hash = sign.Compute(data, a.cfg.Key)
+	}
+
 	return retry.Do(ctx, isRetriableSendError, a.retryIntervals,
 		func() error {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -243,6 +253,9 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Content-Encoding", "gzip")
 			req.Header.Set("Accept-Encoding", "gzip")
+			if hash != "" {
+				req.Header.Set(hashHeader, hash)
+			}
 
 			resp, err := a.httpClient.Do(req)
 			if err != nil {
@@ -251,14 +264,14 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 			}
 			defer resp.Body.Close()
 
-			_, err = io.ReadAll(resp.Body)
+			body, err = io.ReadAll(resp.Body)
 			if err != nil {
 				a.logger.Warn("failed to send request", "error", err)
 				return fmt.Errorf("failed to read body: %w", err)
 			}
 
 			if resp.StatusCode != http.StatusOK {
-				a.logger.Warn("bad status code from server", "error", err, "statusCode", resp.StatusCode)
+				a.logger.Warn("bad status code from server", "error", err, "statusCode", resp.StatusCode, "body", string(body))
 				return fmt.Errorf("unexpected status %s", resp.Status)
 			}
 			return nil

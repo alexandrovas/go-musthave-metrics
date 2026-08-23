@@ -22,7 +22,7 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	repo := repository.NewMemStorage(testLogger)
-	srv := httptest.NewServer(NewRouter(repo, testLogger))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, ""))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -172,7 +172,7 @@ func TestListMetricsEscapesHTML(t *testing.T) {
 	repo := repository.NewMemStorage(testLogger)
 	require.NoError(t, repo.SetGauge(t.Context(), `<script>alert(1)</script>`, 42))
 
-	srv := httptest.NewServer(NewRouter(repo, testLogger))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, ""))
 	defer srv.Close()
 
 	_, body := request(t, srv, http.MethodGet, "/")
