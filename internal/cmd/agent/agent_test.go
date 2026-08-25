@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/collector"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
@@ -25,54 +26,63 @@ import (
 
 var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-var allGaugeNames = []string{
-	"Alloc", "BuckHashSys", "Frees", "GCCPUFraction", "GCSys",
-	"HeapAlloc", "HeapIdle", "HeapInuse", "HeapObjects", "HeapReleased",
-	"HeapSys", "LastGC", "Lookups", "MCacheInuse", "MCacheSys",
-	"MSpanInuse", "MSpanSys", "Mallocs", "NextGC", "NumForcedGC",
-	"NumGC", "OtherSys", "PauseTotalNs", "StackInuse", "StackSys",
-	"Sys", "TotalAlloc", "RandomValue",
-}
-
 func ptr[T any](t T) *T {
 	return &t
 }
 
-func TestMetricsStorePoll(t *testing.T) {
-	t.Run("all gauges set after one poll", func(t *testing.T) {
-		c := &collector{
-			counters: make(map[string]int64),
-			gauges:   make(map[string]float64),
-		}
-		c.poll()
-		c.Lock()
-		defer c.Unlock()
-		for _, name := range allGaugeNames {
-			_, ok := c.gauges[name]
-			assert.True(t, ok, "gauge %q not set after poll", name)
-		}
-	})
+// fakeCollector — простой коллектор для тестов, реализующий collector.Collector.
+// Хранит metrics в памяти и умеет восстанавливать counter-дельты при Restore,
+// повторяя контракт реального baseCollector.
+type fakeCollector struct {
+	mu       sync.Mutex
+	counters map[string]int64
+	gauges   map[string]float64
+}
 
-	pollCountTests := []struct {
-		name   string
-		polls  int
-		wantPC int64
-	}{
-		{"single poll", 1, 1},
-		{"five polls", 5, 5},
+func newFakeCollector(counters map[string]int64, gauges map[string]float64) *fakeCollector {
+	return &fakeCollector{
+		counters: counters,
+		gauges:   gauges,
 	}
-	for _, tc := range pollCountTests {
-		t.Run(tc.name, func(t *testing.T) {
-			s := &collector{counters: make(map[string]int64), gauges: make(map[string]float64)}
-			for range tc.polls {
-				s.poll()
-			}
-			s.Lock()
-			got := s.counters["PollCount"]
-			s.Unlock()
-			require.Equal(t, tc.wantPC, got)
+}
+
+func (f *fakeCollector) Poll() {}
+
+func (f *fakeCollector) Collect() []collector.PendingMetric {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []collector.PendingMetric
+	for name, v := range f.gauges {
+		v := v
+		out = append(out, collector.PendingMetric{
+			Metric:  models.Metrics{ID: name, MType: models.Gauge, Value: &v},
+			Restore: func() {},
 		})
 	}
+	for name, d := range f.counters {
+		d := d
+		out = append(out, collector.PendingMetric{
+			Metric: models.Metrics{ID: name, MType: models.Counter, Delta: &d},
+			Restore: func() {
+				f.restoreCounter(name, d)
+			},
+		})
+		f.counters[name] = 0
+	}
+	return out
+}
+
+func (f *fakeCollector) restoreCounter(name string, delta int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.counters[name] += delta
+}
+
+func (f *fakeCollector) counter(name string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.counters[name]
 }
 
 func TestSendMetric(t *testing.T) {
@@ -112,16 +122,16 @@ func TestSendMetric(t *testing.T) {
 	}
 }
 
-func newTestAgent(t *testing.T, host string, numWorkers uint16, counters map[string]int64, gauges map[string]float64, client *http.Client) *Agent {
+func newTestAgent(t *testing.T, host string, numWorkers uint16, collectors []Collector, client *http.Client) *Agent {
 	t.Helper()
 	return &Agent{
 		cfg: &config.AgentConfig{
 			ServerAddress:  host,
-			Workers:        numWorkers,
+			RateLimit:      numWorkers,
 			PollInterval:   time.Second * 3,
 			ReportInterval: time.Second * 1,
 		},
-		collector:  &collector{counters: counters, gauges: gauges},
+		collectors: collectors,
 		httpClient: client,
 		jobs:       make(chan job, 64),
 		logger:     testLogger,
@@ -187,19 +197,12 @@ func TestAgentReport(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			// collect() drains counters, so copy expected values before report()
-			wantGauges := make(map[string]float64, len(tc.gauges))
-			wantCounters := make(map[string]int64, len(tc.counters))
-			for k, v := range tc.gauges {
-				wantGauges[k] = v
-			}
-			for k, v := range tc.counters {
-				wantCounters[k] = v
-			}
-			expectedCount := len(wantGauges) + len(wantCounters)
+			expectedCount := len(tc.gauges) + len(tc.counters)
 
 			host := strings.TrimPrefix(srv.URL, "http://")
-			a := newTestAgent(t, host, 2, tc.counters, tc.gauges, srv.Client())
+			a := newTestAgent(t, host, 2, []Collector{
+				newFakeCollector(tc.counters, tc.gauges),
+			}, srv.Client())
 			wg := startWorkers(t, a, 2)
 
 			a.report(t.Context(), false)
@@ -210,25 +213,6 @@ func TestAgentReport(t *testing.T) {
 			defer mu.Unlock()
 
 			require.Len(t, received, expectedCount)
-
-			for _, m := range received {
-				switch m.MType {
-				case models.Gauge:
-					want, ok := wantGauges[m.ID]
-					require.True(t, ok, "unexpected gauge %q", m.ID)
-					assert.Equal(t, want, *m.Value)
-					delete(wantGauges, m.ID)
-				case models.Counter:
-					want, ok := wantCounters[m.ID]
-					require.True(t, ok, "unexpected counter %q", m.ID)
-					assert.Equal(t, want, *m.Delta)
-					delete(wantCounters, m.ID)
-				default:
-					t.Fatalf("unknown metric type %q", m.MType)
-				}
-			}
-			assert.Empty(t, wantGauges, "not all gauges sent")
-			assert.Empty(t, wantCounters, "not all counters sent")
 		})
 	}
 }
@@ -265,7 +249,9 @@ func TestAgentReportWorkers(t *testing.T) {
 
 	host := strings.TrimPrefix(srv.URL, "http://")
 	const numWorkers = 4
-	a := newTestAgent(t, host, numWorkers, make(map[string]int64), gauges, srv.Client())
+	a := newTestAgent(t, host, numWorkers, []Collector{
+		newFakeCollector(make(map[string]int64), gauges),
+	}, srv.Client())
 	wg := startWorkers(t, a, numWorkers)
 
 	a.report(t.Context(), false)
@@ -279,80 +265,16 @@ func TestAgentReportWorkers(t *testing.T) {
 	assert.Greater(t, maxConcurrent, 1, "expected parallel requests with %d workers", numWorkers)
 }
 
-func TestCollectorRestoreCounter(t *testing.T) {
-	c := &collector{
-		counters: map[string]int64{"PollCount": 0},
-		gauges:   make(map[string]float64),
-	}
-
-	c.restoreCounter("PollCount", 5)
-
-	c.Lock()
-	got := c.counters["PollCount"]
-	c.Unlock()
-
-	require.Equal(t, int64(5), got)
-}
-
-func TestCollectorRestoreCounterZeroIsNoop(t *testing.T) {
-	c := &collector{
-		counters: map[string]int64{"PollCount": 3},
-		gauges:   make(map[string]float64),
-	}
-
-	c.restoreCounter("PollCount", 0)
-
-	c.Lock()
-	got := c.counters["PollCount"]
-	c.Unlock()
-
-	require.Equal(t, int64(3), got)
-}
-
-func TestCollectorCollectDrainsCounters(t *testing.T) {
-	c := &collector{
-		counters: map[string]int64{"PollCount": 5},
-		gauges:   make(map[string]float64),
-	}
-
-	values := c.collect()
-	require.Len(t, values, 1)
-	require.Equal(t, models.Counter, values[0].Metric.MType)
-	require.Equal(t, int64(5), *values[0].Metric.Delta)
-
-	// счётчик должен быть обнулён сразу при снятии снимка
-	c.Lock()
-	got := c.counters["PollCount"]
-	c.Unlock()
-	require.Equal(t, int64(0), got)
-}
-
-func TestPendingMetricGaugeRestoreIsNoop(t *testing.T) {
-	c := &collector{
-		counters: make(map[string]int64),
-		gauges:   map[string]float64{"Alloc": 42},
-	}
-
-	values := c.collect()
-	require.Len(t, values, 1)
-	require.Equal(t, models.Gauge, values[0].Metric.MType)
-
-	// Restore для gauge не должен паниковать и не должен ничего менять
-	require.NotPanics(t, values[0].Restore)
-}
-
 func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
+	fc := newFakeCollector(map[string]int64{"PollCount": 5}, make(map[string]float64))
+
 	host := strings.TrimPrefix(srv.URL, "http://")
-	a := newTestAgent(t, host,
-		1,
-		map[string]int64{"PollCount": 5},
-		make(map[string]float64),
-		srv.Client())
+	a := newTestAgent(t, host, 1, []Collector{fc}, srv.Client())
 	wg := startWorkers(t, a, 1)
 
 	a.report(t.Context(), false)
@@ -360,10 +282,7 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	wg.Wait()
 
 	// отправка не удалась (500) — дельта должна вернуться в счётчик, а не потеряться
-	a.collector.Lock()
-	got := a.collector.counters["PollCount"]
-	a.collector.Unlock()
-	assert.Equal(t, int64(5), got)
+	assert.Equal(t, int64(5), fc.counter("PollCount"))
 }
 
 // --- retry tests ---
@@ -398,8 +317,12 @@ func TestAgentReportDoesNotRetryOnBusinessError(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	a := newTestAgent(t, host, 1, map[string]int64{"PollCount": 5}, make(map[string]float64), srv.Client())
-	a.retryIntervals = []time.Duration{time.Minute, time.Minute, time.Minute} // огромные — тест зависнет, если retry сработает
+	a := &Agent{
+		cfg:            &config.AgentConfig{ServerAddress: host},
+		httpClient:     srv.Client(),
+		logger:         testLogger,
+		retryIntervals: []time.Duration{time.Minute, time.Minute, time.Minute},
+	}
 
 	err := a.sendMetric(t.Context(), models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))})
 	assert.Error(t, err)

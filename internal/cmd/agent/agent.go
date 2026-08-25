@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/collector"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
@@ -27,17 +28,24 @@ import (
 // отправленных в рамках одного цикла report — это ограничивает суммарное
 // время, которое агент готов потратить на доставку метрик этого цикла
 // (включая все ретраи), независимо от того, сколько отдельных job из него
-// получилось. Без этого в режиме batch=false ретраи по 1s/3s/5s для КАЖДОЙ
-// метрики по отдельности могли бы суммарно растягиваться на неопределённо
-// долгое время, если сервер недоступен.
+// получилось.
 type job struct {
-	metrics  []pendingMetric
+	metrics  []collector.PendingMetric
 	deadline time.Time
+}
+
+// Collector — общий интерфейс коллектора
+type Collector interface {
+	// Обновляет внутреннее хранилище
+	Poll()
+
+	// Cнимает с хранилище снимок накопленных метрик
+	Collect() []collector.PendingMetric
 }
 
 type Agent struct {
 	cfg            *config.AgentConfig
-	collector      *collector
+	collectors     []Collector
 	httpClient     *http.Client
 	jobs           chan job
 	logger         *slog.Logger
@@ -47,14 +55,14 @@ type Agent struct {
 func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 	return &Agent{
 		cfg: cfg,
-		collector: &collector{
-			counters: make(map[string]int64),
-			gauges:   make(map[string]float64),
+		collectors: []Collector{
+			collector.NewRuntime(logger.With("collector", "runtime")),
+			collector.NewGopsutil(logger.With("collector", "gopsutil")),
 		},
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs:           make(chan job, cfg.Workers*10),
+		jobs:           make(chan job, cfg.RateLimit*10),
 		logger:         logger,
 		retryIntervals: retry.Intervals,
 	}
@@ -63,16 +71,17 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 func (a *Agent) Run() error {
 	ctx := context.Background()
 
-	a.logger.Info("Agent is running", "server", a.cfg.ServerAddress, "workers", a.cfg.Workers)
+	a.logger.Info("Agent is running", "server", a.cfg.ServerAddress, "rate_limit", a.cfg.RateLimit)
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
 	var wg sync.WaitGroup
 
-	// run multiple workers to push metrics
-	a.logger.Info("Start push workers", "count", a.cfg.Workers)
-	for idx := range a.cfg.Workers {
+	// run multiple workers to push metrics; их количество ограничивает число
+	// одновременно исходящих запросов на сервер сверху (rate limit).
+	a.logger.Info("Start push workers", "count", a.cfg.RateLimit)
+	for idx := range a.cfg.RateLimit {
 		wg.Go(func() {
 			a.runWorker(ctx, idx)
 		})
@@ -83,7 +92,8 @@ func (a *Agent) Run() error {
 		a.runReporting(ctx, a.cfg.BatchMode)
 	})
 
-	// run poll metrics goroutine
+	// run poll metrics goroutine — внутри запускает по горутине на каждый
+	// коллектор.
 	wg.Go(func() {
 		a.runPolling(ctx)
 	})
@@ -108,20 +118,28 @@ func (a *Agent) runReporting(ctx context.Context, batchMode bool) {
 	}
 }
 
+// runPolling запускает независимую горутину опроса для каждого коллектора.
 func (a *Agent) runPolling(ctx context.Context) {
-	timer := time.NewTicker(a.cfg.PollInterval)
-	a.logger.Debug("Polling process started...", "interval", a.cfg.PollInterval)
-	for {
-		select {
-		case <-timer.C:
-			a.collector.poll()
-			a.logger.Debug("Metrics successfully polled")
-		case <-ctx.Done():
-			timer.Stop()
-			a.logger.Debug("Polling stopped")
-			return
-		}
+	var wg sync.WaitGroup
+	for _, c := range a.collectors {
+		wg.Go(func() {
+			col := c
+
+			timer := time.NewTicker(a.cfg.PollInterval)
+			defer timer.Stop()
+
+			for {
+				select {
+				case <-timer.C:
+					col.Poll()
+				case <-ctx.Done():
+					return
+				}
+			}
+		})
 	}
+	wg.Wait()
+	a.logger.Debug("Polling stopped")
 }
 
 func (a *Agent) runWorker(ctx context.Context, idx uint16) {
@@ -165,7 +183,23 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 }
 
 func (a *Agent) report(ctx context.Context, batchMode bool) {
-	pendingMetrics := a.collector.collect()
+	// снимаем снимки со всех коллекторов параллельно и объединяем результаты
+	results := make([][]collector.PendingMetric, len(a.collectors))
+	var wg sync.WaitGroup
+	for i, c := range a.collectors {
+		wg.Go(func() {
+			results[i] = c.Collect()
+		})
+	}
+	wg.Wait()
+
+	// обхединяем метрики в один slice
+	var pendingMetrics []collector.PendingMetric
+	for _, r := range results {
+		pendingMetrics = append(pendingMetrics, r...)
+	}
+
+	// если метрик нет, выходим
 	if len(pendingMetrics) == 0 {
 		return
 	}
@@ -193,7 +227,7 @@ func (a *Agent) report(ctx context.Context, batchMode bool) {
 		for _, p := range pendingMetrics {
 			select {
 			case a.jobs <- job{
-				metrics:  []pendingMetric{p},
+				metrics:  []collector.PendingMetric{p},
 				deadline: deadline,
 			}:
 			case <-ctx.Done():
