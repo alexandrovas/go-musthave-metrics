@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexandrovas/go-musthave-metrics/internal/collector"
+	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
@@ -48,21 +48,21 @@ func newFakeCollector(counters map[string]int64, gauges map[string]float64) *fak
 
 func (f *fakeCollector) Poll() {}
 
-func (f *fakeCollector) Collect() []collector.PendingMetric {
+func (f *fakeCollector) Collect() []collectors.PendingMetric {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	var out []collector.PendingMetric
+	var out []collectors.PendingMetric
 	for name, v := range f.gauges {
 		v := v
-		out = append(out, collector.PendingMetric{
+		out = append(out, collectors.PendingMetric{
 			Metric:  models.Metrics{ID: name, MType: models.Gauge, Value: &v},
 			Restore: func() {},
 		})
 	}
 	for name, d := range f.counters {
 		d := d
-		out = append(out, collector.PendingMetric{
+		out = append(out, collectors.PendingMetric{
 			Metric: models.Metrics{ID: name, MType: models.Counter, Delta: &d},
 			Restore: func() {
 				f.restoreCounter(name, d)
@@ -122,7 +122,7 @@ func TestSendMetric(t *testing.T) {
 	}
 }
 
-func newTestAgent(t *testing.T, host string, numWorkers uint16, collectors []Collector, client *http.Client) *Agent {
+func newTestAgent(t *testing.T, host string, numWorkers uint16, collectors []collector, client *http.Client) *Agent {
 	t.Helper()
 	return &Agent{
 		cfg: &config.AgentConfig{
@@ -200,7 +200,7 @@ func TestAgentReport(t *testing.T) {
 			expectedCount := len(tc.gauges) + len(tc.counters)
 
 			host := strings.TrimPrefix(srv.URL, "http://")
-			a := newTestAgent(t, host, 2, []Collector{
+			a := newTestAgent(t, host, 2, []collector{
 				newFakeCollector(tc.counters, tc.gauges),
 			}, srv.Client())
 			wg := startWorkers(t, a, 2)
@@ -249,7 +249,7 @@ func TestAgentReportWorkers(t *testing.T) {
 
 	host := strings.TrimPrefix(srv.URL, "http://")
 	const numWorkers = 4
-	a := newTestAgent(t, host, numWorkers, []Collector{
+	a := newTestAgent(t, host, numWorkers, []collector{
 		newFakeCollector(make(map[string]int64), gauges),
 	}, srv.Client())
 	wg := startWorkers(t, a, numWorkers)
@@ -274,7 +274,7 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	fc := newFakeCollector(map[string]int64{"PollCount": 5}, make(map[string]float64))
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	a := newTestAgent(t, host, 1, []Collector{fc}, srv.Client())
+	a := newTestAgent(t, host, 1, []collector{fc}, srv.Client())
 	wg := startWorkers(t, a, 1)
 
 	a.report(t.Context(), false)

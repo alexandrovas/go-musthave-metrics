@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexandrovas/go-musthave-metrics/internal/collector"
+	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
@@ -30,22 +30,22 @@ import (
 // (включая все ретраи), независимо от того, сколько отдельных job из него
 // получилось.
 type job struct {
-	metrics  []collector.PendingMetric
+	metrics  []collectors.PendingMetric
 	deadline time.Time
 }
 
-// Collector — общий интерфейс коллектора
-type Collector interface {
+// collector — общий интерфейс коллектора
+type collector interface {
 	// Обновляет внутреннее хранилище
 	Poll()
 
 	// Cнимает с хранилище снимок накопленных метрик
-	Collect() []collector.PendingMetric
+	Collect() []collectors.PendingMetric
 }
 
 type Agent struct {
 	cfg            *config.AgentConfig
-	collectors     []Collector
+	collectors     []collector
 	httpClient     *http.Client
 	jobs           chan job
 	logger         *slog.Logger
@@ -55,9 +55,9 @@ type Agent struct {
 func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 	return &Agent{
 		cfg: cfg,
-		collectors: []Collector{
-			collector.NewRuntime(logger.With("collector", "runtime")),
-			collector.NewGopsutil(logger.With("collector", "gopsutil")),
+		collectors: []collector{
+			collectors.NewRuntime(logger.With("collector", "runtime")),
+			collectors.NewGopsutil(logger.With("collector", "gopsutil")),
 		},
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
@@ -184,7 +184,7 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 
 func (a *Agent) report(ctx context.Context, batchMode bool) {
 	// снимаем снимки со всех коллекторов параллельно и объединяем результаты
-	results := make([][]collector.PendingMetric, len(a.collectors))
+	results := make([][]collectors.PendingMetric, len(a.collectors))
 	var wg sync.WaitGroup
 	for i, c := range a.collectors {
 		wg.Go(func() {
@@ -194,7 +194,7 @@ func (a *Agent) report(ctx context.Context, batchMode bool) {
 	wg.Wait()
 
 	// обхединяем метрики в один slice
-	var pendingMetrics []collector.PendingMetric
+	var pendingMetrics []collectors.PendingMetric
 	for _, r := range results {
 		pendingMetrics = append(pendingMetrics, r...)
 	}
@@ -227,7 +227,7 @@ func (a *Agent) report(ctx context.Context, batchMode bool) {
 		for _, p := range pendingMetrics {
 			select {
 			case a.jobs <- job{
-				metrics:  []collector.PendingMetric{p},
+				metrics:  []collectors.PendingMetric{p},
 				deadline: deadline,
 			}:
 			case <-ctx.Done():
