@@ -11,7 +11,7 @@ func TestComputeIsDeterministic(t *testing.T) {
 	h1 := Compute(data, "secret")
 	h2 := Compute(data, "secret")
 	assert.Equal(t, h1, h2)
-	assert.Len(t, h1, 64, "hex-encoded SHA256 must be 64 characters")
+	assert.Len(t, h1, 44, "base64-encoded SHA256 must be 44 characters")
 }
 
 func TestComputeDependsOnKey(t *testing.T) {

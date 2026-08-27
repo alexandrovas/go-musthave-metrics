@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"bytes"
-	"crypto/hmac"
+	"crypto/subtle"
 	"io"
 	"net/http"
 
@@ -93,7 +93,7 @@ func ValidateSignature(key string) func(http.Handler) http.Handler {
 			r.Body.Close()
 
 			wantHash := sign.Compute(body, key)
-			if !hmac.Equal([]byte(gotHash), []byte(wantHash)) {
+			if subtle.ConstantTimeCompare([]byte(gotHash), []byte(wantHash)) != 1 {
 				http.Error(w, "hash mismatch", http.StatusBadRequest)
 				return
 			}
