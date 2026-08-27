@@ -150,6 +150,7 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 			}
 
 			sendCtx, cancel := context.WithDeadline(ctx, j.deadline)
+			defer cancel()
 
 			metrics := make([]models.Metrics, len(j.metrics))
 			for i, m := range j.metrics {
@@ -162,7 +163,6 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 				}
 			}
 
-			cancel()
 		case <-ctx.Done():
 			return
 		}
