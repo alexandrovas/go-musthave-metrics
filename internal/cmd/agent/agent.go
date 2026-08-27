@@ -62,7 +62,7 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 		httpClient: &http.Client{
 			Timeout: time.Second * 5,
 		},
-		jobs:           make(chan job, cfg.RateLimit*10),
+		jobs:           make(chan job, cfg.RateLimit),
 		logger:         logger,
 		retryIntervals: retry.Intervals,
 	}
