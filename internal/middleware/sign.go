@@ -75,12 +75,11 @@ func ValidateSignature(key string) func(http.Handler) http.Handler {
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotHash := r.Header.Get(hashHeader)
-			if gotHash == "" {
-				// http.Error(w, "hash is required", http.StatusBadRequest)
-				// return
 
-				// В тестах ошибка, запросы выполняются без заголовка HashSHA256
-				// https://github.com/Yandex-Practicum/go-autotests/blob/main/cmd/metricstest_v2/iteration14_test.go
+			// В тестах запросы выполняются без заголовка HashSHA256,
+			// поэтому такие запросы тоже обрабатываем.
+			// https://github.com/Yandex-Practicum/go-autotests/blob/main/cmd/metricstest_v2/iteration14_test.go
+			if gotHash == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
