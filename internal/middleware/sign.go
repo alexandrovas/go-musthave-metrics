@@ -47,13 +47,9 @@ func (w *signWriter) flush() error {
 
 // SignResponse подписывает тело ответа заголовком HashSHA256, если key не пуст.
 // При пустом key — no-op, чтобы не платить за буферизацию ответа, когда
-// подпись не требуется. Применяется ко всем эндпоинтам, включая GET.
+// подпись не требуется.
 func SignResponse(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if key == "" {
-			return next
-		}
-
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sw := &signWriter{ResponseWriter: w, key: key}
 			next.ServeHTTP(sw, r)
@@ -62,17 +58,12 @@ func SignResponse(key string) func(http.Handler) http.Handler {
 	}
 }
 
-// ValidateSignature при непустом key проверяет заголовок запроса HashSHA256
+// ValidateSignature проверяет заголовок запроса HashSHA256
 // на соответствие хешу от тела запроса: заголовок обязателен, при его
 // отсутствии или несовпадении сервер отвечает 400 и не пропускает запрос
-// дальше. При пустом key — no-op. Предназначен только для эндпоинтов со
-// смысловым телом запроса (POST); на GET не применяется.
+// дальше. При пустом key — no-op.
 func ValidateSignature(key string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if key == "" {
-			return next
-		}
-
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotHash := r.Header.Get(hashHeader)
 
