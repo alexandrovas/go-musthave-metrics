@@ -37,6 +37,7 @@ type ServerConfig struct {
 	FileStoragePath string        `koanf:"file_storage_path"`
 	RestoreState    bool          `koanf:"restore"`
 	DatabaseDSN     string        `koanf:"database_dsn"`
+	Key             string        `koanf:"key"`
 }
 
 // конфигурация агента
@@ -44,9 +45,9 @@ type AgentConfig struct {
 	ServerAddress  string        `koanf:"address"`
 	PollInterval   time.Duration `koanf:"poll_interval"`
 	ReportInterval time.Duration `koanf:"report_interval"`
-	Workers        uint16        `koanf:"workers"`
+	RateLimit      uint16        `koanf:"rate_limit"`
 	Log            LogConfig     `koanf:"log"`
-	BatchMode      bool          `koanf:"batch"`
+	Key            string        `koanf:"key"`
 }
 
 // durationDecodeHook учит mapstructure понимать голые числа как секунды.
@@ -110,6 +111,7 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 				durationDecodeHook,
 				mapstructure.StringToTimeDurationHookFunc(),
 				stringToBoolHook,
+				mapstructure.StringToUint16HookFunc(),
 			),
 		},
 	}); err != nil {
@@ -137,8 +139,8 @@ func LoadAgentConfig(configPath string, flags *pflag.FlagSet) (*AgentConfig, err
 	if cfg.ReportInterval <= 0 {
 		return nil, fmt.Errorf("report_interval must be strictly positive, got %s", cfg.ReportInterval)
 	}
-	if cfg.Workers <= 0 {
-		return nil, fmt.Errorf("workers must be strictly positive, got %d", cfg.Workers)
+	if cfg.RateLimit <= 0 {
+		return nil, fmt.Errorf("rate_limit must be strictly positive, got %d", cfg.RateLimit)
 	}
 	return &cfg, nil
 }

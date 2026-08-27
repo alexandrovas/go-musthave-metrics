@@ -86,7 +86,7 @@ func (s *Server) Run() error {
 
 	srv := &http.Server{
 		Addr:    s.cfg.Address,
-		Handler: handlerHttp.NewRouter(repo, s.logger),
+		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key),
 	}
 
 	wg.Go(func() {

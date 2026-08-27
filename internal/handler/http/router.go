@@ -20,22 +20,35 @@ type MetricsService interface {
 	Ping(ctx context.Context) error
 }
 
-func NewRouter(repo service.Repository, logger *slog.Logger) http.Handler {
+func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string) http.Handler {
 	svc := service.NewMetricsService(repo)
 	h := NewHandler(svc, logger)
 
 	r := chi.NewRouter()
+
+	// Глобальные middlewares для всех запросов (логирование и сжатие ответов)
 	r.Use(middleware.Logger(logger), middleware.Compression)
 
-	r.With(middleware.RequireContentTypeJson).Post("/update", h.UpdateMetricJson)
-	r.With(middleware.RequireContentTypeJson).Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
-	r.With(middleware.RequireContentTypeJson).Post("/updates", h.BatchUpdateMeticsJson)
-	r.With(middleware.RequireContentTypeJson).Post("/updates/", h.BatchUpdateMeticsJson) // для успешного прохождения тестов в Github
+	// Если указан hashKey, то подписываем все исходящие ответы
+	// и проверяем входящие запросы, если в них есть подпись
+	if hashKey != "" {
+		r.Use(
+			middleware.SignResponse(hashKey),
+			middleware.ValidateSignature(hashKey),
+		)
+	}
+
+	jsonRouter := r.With(middleware.RequireContentTypeJson)
+	jsonRouter.Post("/update", h.UpdateMetricJson)
+	jsonRouter.Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
+	jsonRouter.Post("/updates", h.BatchUpdateMeticsJson)
+	jsonRouter.Post("/updates/", h.BatchUpdateMeticsJson) // для успешного прохождения тестов в Github
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 
-	r.With(middleware.RequireContentTypeJson).Post("/value", h.ValueJson)
-	r.With(middleware.RequireContentTypeJson).Post("/value/", h.ValueJson) // для успешного прохождения тестов в Github
+	jsonRouter.Post("/value", h.ValueJson)
+	jsonRouter.Post("/value/", h.ValueJson) // для успешного прохождения тестов в Github
 	r.Get("/value/{type}/{name}", h.GetMetric)
+
 	r.Get("/ping", h.Ping)
 
 	r.Get("/", h.ListMetrics)

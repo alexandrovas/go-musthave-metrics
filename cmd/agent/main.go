@@ -39,10 +39,10 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server address")
 	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(2*time.Second), "poll_interval", "p", "Metrics poll interval (e.g. 2s or 2)")
 	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(10*time.Second), "report_interval", "r", "Metrics report interval (e.g. 10s or 10)")
-	cmd.PersistentFlags().Uint16P("workers", "w", 5, "Workers count")
+	cmd.PersistentFlags().Uint16P("rate_limit", "l", 5, "max number of simultaneously outgoing requests to the server")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
-	cmd.PersistentFlags().BoolP("batch", "", true, "enable batch mode")
+	cmd.PersistentFlags().StringP("key", "k", "", "key for request signing")
 
 	return cmd
 }
