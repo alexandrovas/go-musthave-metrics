@@ -20,8 +20,8 @@ func TestRuntimePoll(t *testing.T) {
 	t.Run("all gauges set after one poll", func(t *testing.T) {
 		c := NewRuntime(testLogger)
 		c.Poll()
-		c.Lock()
-		defer c.Unlock()
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		for _, name := range allGaugeNames {
 			_, ok := c.gauges[name]
 			assert.True(t, ok, "gauge %q not set after poll", name)
@@ -42,9 +42,9 @@ func TestRuntimePoll(t *testing.T) {
 			for range tc.polls {
 				s.Poll()
 			}
-			s.Lock()
+			s.mu.Lock()
 			got := s.counters["PollCount"]
-			s.Unlock()
+			s.mu.Unlock()
 			require.Equal(t, tc.wantPC, got)
 		})
 	}

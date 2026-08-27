@@ -11,8 +11,8 @@ func TestGopsutilPoll(t *testing.T) {
 	c := NewGopsutil(testLogger)
 	c.Poll()
 
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	_, ok := c.gauges["TotalMemory"]
 	assert.True(t, ok, "TotalMemory gauge not set")

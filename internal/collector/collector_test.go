@@ -18,9 +18,9 @@ func TestRestoreCounter(t *testing.T) {
 
 	c.restoreCounter("PollCount", 5)
 
-	c.Lock()
+	c.mu.Lock()
 	got := c.counters["PollCount"]
-	c.Unlock()
+	c.mu.Unlock()
 
 	require.Equal(t, int64(5), got)
 }
@@ -31,9 +31,9 @@ func TestRestoreCounterZeroIsNoop(t *testing.T) {
 
 	c.restoreCounter("PollCount", 0)
 
-	c.Lock()
+	c.mu.Lock()
 	got := c.counters["PollCount"]
-	c.Unlock()
+	c.mu.Unlock()
 
 	require.Equal(t, int64(3), got)
 }
@@ -48,9 +48,9 @@ func TestCollectDrainsCounters(t *testing.T) {
 	require.Equal(t, int64(5), *values[0].Metric.Delta)
 
 	// счётчик должен быть обнулён сразу при снятии снимка
-	c.Lock()
+	c.mu.Lock()
 	got := c.counters["PollCount"]
-	c.Unlock()
+	c.mu.Unlock()
 	require.Equal(t, int64(0), got)
 }
 

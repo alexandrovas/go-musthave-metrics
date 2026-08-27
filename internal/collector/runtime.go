@@ -21,7 +21,7 @@ func (s *Runtime) Poll() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	s.Lock()
+	s.mu.Lock()
 	s.counters["PollCount"] += 1
 	s.gauges["RandomValue"] = rand.Float64()
 	s.gauges["Alloc"] = float64(m.Alloc)
@@ -51,7 +51,7 @@ func (s *Runtime) Poll() {
 	s.gauges["StackSys"] = float64(m.StackSys)
 	s.gauges["Sys"] = float64(m.Sys)
 	s.gauges["TotalAlloc"] = float64(m.TotalAlloc)
-	s.Unlock()
+	s.mu.Unlock()
 }
 
 func (s *Runtime) Collect() []PendingMetric {

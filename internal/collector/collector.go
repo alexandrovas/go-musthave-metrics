@@ -31,7 +31,7 @@ type baseCollector struct {
 	counters map[string]int64
 	gauges   map[string]float64
 	logger   *slog.Logger
-	sync.Mutex
+	mu       sync.Mutex
 }
 
 func newBaseCollector(logger *slog.Logger) *baseCollector {
@@ -47,8 +47,8 @@ func (s *baseCollector) restoreCounter(name string, delta int64) {
 	if delta == 0 {
 		return
 	}
-	s.Lock()
-	defer s.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.counters[name] += delta
 }
 
@@ -57,8 +57,8 @@ func (s *baseCollector) restoreCounter(name string, delta int64) {
 // два разных вызова не заберут одну и ту же дельту дважды, даже если
 // предыдущий цикл report ещё не завершил доставку.
 func (s *baseCollector) drain() []PendingMetric {
-	s.Lock()
-	defer s.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	pending := make([]PendingMetric, 0, len(s.gauges)+len(s.counters))
 	for name, value := range s.gauges {

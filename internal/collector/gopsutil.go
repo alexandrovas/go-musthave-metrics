@@ -24,10 +24,10 @@ func (s *Gopsutil) Poll() {
 	if err != nil {
 		s.logger.Error("read virtual memory", "error", err)
 	} else {
-		s.Lock()
+		s.mu.Lock()
 		s.gauges["TotalMemory"] = float64(vm.Total)
 		s.gauges["FreeMemory"] = float64(vm.Free)
-		s.Unlock()
+		s.mu.Unlock()
 	}
 
 	// interval=0 — не блокируемся: используем дельту с прошлого вызова.
@@ -37,11 +37,11 @@ func (s *Gopsutil) Poll() {
 		return
 	}
 
-	s.Lock()
+	s.mu.Lock()
 	for i, p := range percents {
 		s.gauges[fmt.Sprintf("CPUutilization%d", i+1)] = p
 	}
-	s.Unlock()
+	s.mu.Unlock()
 }
 
 func (s *Gopsutil) Collect() []PendingMetric {
