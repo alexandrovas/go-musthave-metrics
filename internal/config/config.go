@@ -47,7 +47,6 @@ type AgentConfig struct {
 	ReportInterval time.Duration `koanf:"report_interval"`
 	RateLimit      uint16        `koanf:"rate_limit"`
 	Log            LogConfig     `koanf:"log"`
-	BatchMode      bool          `koanf:"batch"`
 	Key            string        `koanf:"key"`
 }
 

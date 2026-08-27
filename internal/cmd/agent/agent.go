@@ -23,12 +23,10 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 )
 
-// job — единица работы воркера: одна метрика (batch=false) либо весь батч,
-// собранный за один цикл report (batch=true). deadline общий для всех job,
-// отправленных в рамках одного цикла report — это ограничивает суммарное
-// время, которое агент готов потратить на доставку метрик этого цикла
-// (включая все ретраи), независимо от того, сколько отдельных job из него
-// получилось.
+// job — единица работы воркера: батч метрик, собранный за один цикл report.
+// deadline общий для всех job, отправленных в рамках одного цикла report — это
+// ограничивает суммарное время, которое агент готов потратить на доставку
+// метрик этого цикла (включая все ретраи).
 type job struct {
 	metrics  []collectors.PendingMetric
 	deadline time.Time
@@ -39,7 +37,7 @@ type collector interface {
 	// Обновляет внутреннее хранилище
 	Poll()
 
-	// Cнимает с хранилище снимок накопленных метрик
+	// Cнимает с хранилища снимок накопленных метрик
 	Collect() []collectors.PendingMetric
 }
 
@@ -89,7 +87,7 @@ func (a *Agent) Run() error {
 
 	// run report metrics goroutine
 	wg.Go(func() {
-		a.runReporting(ctx, a.cfg.BatchMode)
+		a.runReporting(ctx)
 	})
 
 	// run poll metrics goroutine — внутри запускает по горутине на каждый
@@ -103,13 +101,13 @@ func (a *Agent) Run() error {
 	return nil
 }
 
-func (a *Agent) runReporting(ctx context.Context, batchMode bool) {
+func (a *Agent) runReporting(ctx context.Context) {
 	timer := time.NewTicker(a.cfg.ReportInterval)
 	a.logger.Debug("Reporting process started...", "interval", a.cfg.ReportInterval)
 	for {
 		select {
 		case <-timer.C:
-			a.report(ctx, batchMode)
+			a.report(ctx)
 		case <-ctx.Done():
 			timer.Stop()
 			a.logger.Debug("Reporting stopped")
@@ -153,25 +151,14 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 
 			sendCtx, cancel := context.WithDeadline(ctx, j.deadline)
 
-			if len(j.metrics) == 1 {
-				if err := a.sendMetric(sendCtx, j.metrics[0].Metric); err != nil {
-					log.Error("send metric",
-						"type", j.metrics[0].Metric.MType,
-						"name", j.metrics[0].Metric.ID,
-						"error", err)
-					j.metrics[0].Restore()
-				}
-			} else {
-				// in batch mode send all metrics all at once
-				metrics := make([]models.Metrics, len(j.metrics))
-				for i, m := range j.metrics {
-					metrics[i] = m.Metric
-				}
-				if err := a.sendMetricsBatch(sendCtx, metrics); err != nil {
-					log.Error("send metrics batch", "error", err)
-					for _, pm := range j.metrics {
-						pm.Restore()
-					}
+			metrics := make([]models.Metrics, len(j.metrics))
+			for i, m := range j.metrics {
+				metrics[i] = m.Metric
+			}
+			if err := a.sendMetricsBatch(sendCtx, metrics); err != nil {
+				log.Error("send metrics batch", "error", err)
+				for _, pm := range j.metrics {
+					pm.Restore()
 				}
 			}
 
@@ -182,7 +169,7 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 	}
 }
 
-func (a *Agent) report(ctx context.Context, batchMode bool) {
+func (a *Agent) report(ctx context.Context) {
 	// снимаем снимки со всех коллекторов параллельно и объединяем результаты
 	results := make([][]collectors.PendingMetric, len(a.collectors))
 	var wg sync.WaitGroup
@@ -193,7 +180,7 @@ func (a *Agent) report(ctx context.Context, batchMode bool) {
 	}
 	wg.Wait()
 
-	// обхединяем метрики в один slice
+	// объединяем метрики в один slice
 	var pendingMetrics []collectors.PendingMetric
 	for _, r := range results {
 		pendingMetrics = append(pendingMetrics, r...)
@@ -210,30 +197,15 @@ func (a *Agent) report(ctx context.Context, batchMode bool) {
 	// отправку и начинаем новый цикл.
 	deadline := time.Now().Add(a.cfg.ReportInterval)
 
-	if batchMode {
-		select {
-		// in batch mode report all metrics all at once
-		case a.jobs <- job{
-			metrics:  pendingMetrics,
-			deadline: deadline,
-		}:
-		case <-ctx.Done():
-			// restore all metrics state
-			for _, p := range pendingMetrics {
-				p.Restore()
-			}
-		}
-	} else {
+	select {
+	case a.jobs <- job{
+		metrics:  pendingMetrics,
+		deadline: deadline,
+	}:
+	case <-ctx.Done():
+		// restore all metrics state
 		for _, p := range pendingMetrics {
-			select {
-			case a.jobs <- job{
-				metrics:  []collectors.PendingMetric{p},
-				deadline: deadline,
-			}:
-			case <-ctx.Done():
-				p.Restore()
-				return
-			}
+			p.Restore()
 		}
 	}
 
@@ -246,15 +218,6 @@ func (a *Agent) sendMetricsBatch(ctx context.Context, metrics []models.Metrics) 
 		return fmt.Errorf("json encode error: %w", err)
 	}
 	url := fmt.Sprintf("http://%s/updates", a.cfg.ServerAddress)
-	return a.sendData(ctx, url, buf.Bytes())
-}
-
-func (a *Agent) sendMetric(ctx context.Context, metric models.Metrics) error {
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(metric); err != nil {
-		return fmt.Errorf("json encode error: %w", err)
-	}
-	url := fmt.Sprintf("http://%s/update", a.cfg.ServerAddress)
 	return a.sendData(ctx, url, buf.Bytes())
 }
 

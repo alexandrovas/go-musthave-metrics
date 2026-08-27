@@ -42,7 +42,6 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().Uint16P("rate_limit", "l", 5, "max number of simultaneously outgoing requests to the server")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
-	cmd.PersistentFlags().BoolP("batch", "", true, "enable batch mode")
 	cmd.PersistentFlags().StringP("key", "k", "", "key for request signing")
 
 	return cmd

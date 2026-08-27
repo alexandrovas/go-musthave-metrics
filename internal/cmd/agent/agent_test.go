@@ -54,14 +54,12 @@ func (f *fakeCollector) Collect() []collectors.PendingMetric {
 
 	var out []collectors.PendingMetric
 	for name, v := range f.gauges {
-		v := v
 		out = append(out, collectors.PendingMetric{
 			Metric:  models.Metrics{ID: name, MType: models.Gauge, Value: &v},
 			Restore: func() {},
 		})
 	}
 	for name, d := range f.counters {
-		d := d
 		out = append(out, collectors.PendingMetric{
 			Metric: models.Metrics{ID: name, MType: models.Counter, Delta: &d},
 			Restore: func() {
@@ -85,7 +83,7 @@ func (f *fakeCollector) counter(name string) int64 {
 	return f.counters[name]
 }
 
-func TestSendMetric(t *testing.T) {
+func TestSendMetricsBatch(t *testing.T) {
 	tests := []struct {
 		metric  models.Metrics
 		name    string
@@ -112,7 +110,7 @@ func TestSendMetric(t *testing.T) {
 				httpClient: srv.Client(),
 				logger:     testLogger,
 			}
-			err := a.sendMetric(t.Context(), tc.metric)
+			err := a.sendMetricsBatch(t.Context(), []models.Metrics{tc.metric})
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -175,7 +173,7 @@ func TestAgentReport(t *testing.T) {
 			received := make([]models.Metrics, 0)
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/update", r.URL.Path)
+				assert.Equal(t, "/updates", r.URL.Path)
 				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 				assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 
@@ -186,12 +184,12 @@ func TestAgentReport(t *testing.T) {
 				body, err := io.ReadAll(zr)
 				require.NoError(t, err)
 
-				var m models.Metrics
-				err = json.Unmarshal(body, &m)
+				var ms []models.Metrics
+				err = json.Unmarshal(body, &ms)
 				require.NoError(t, err)
 
 				mu.Lock()
-				received = append(received, m)
+				received = append(received, ms...)
 				mu.Unlock()
 				w.WriteHeader(http.StatusOK)
 			}))
@@ -205,7 +203,7 @@ func TestAgentReport(t *testing.T) {
 			}, srv.Client())
 			wg := startWorkers(t, a, 2)
 
-			a.report(t.Context(), false)
+			a.report(t.Context())
 			close(a.jobs)
 			wg.Wait()
 
@@ -217,25 +215,26 @@ func TestAgentReport(t *testing.T) {
 	}
 }
 
-func TestAgentReportWorkers(t *testing.T) {
+func TestAgentReportBatch(t *testing.T) {
 	const totalMetrics = 10
 
 	var mu sync.Mutex
-	maxConcurrent, current, received := 0, 0, 0
+	received := make([]models.Metrics, 0)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		current++
-		if current > maxConcurrent {
-			maxConcurrent = current
-		}
-		mu.Unlock()
+		zr, err := gzip.NewReader(r.Body)
+		require.NoError(t, err)
+		defer zr.Close()
 
-		time.Sleep(10 * time.Millisecond) // имитируем сетевую задержку
+		body, err := io.ReadAll(zr)
+		require.NoError(t, err)
+
+		var ms []models.Metrics
+		err = json.Unmarshal(body, &ms)
+		require.NoError(t, err)
 
 		mu.Lock()
-		current--
-		received++
+		received = append(received, ms...)
 		mu.Unlock()
 
 		w.WriteHeader(http.StatusOK)
@@ -248,21 +247,19 @@ func TestAgentReportWorkers(t *testing.T) {
 	}
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	const numWorkers = 4
-	a := newTestAgent(t, host, numWorkers, []collector{
+	a := newTestAgent(t, host, 2, []collector{
 		newFakeCollector(make(map[string]int64), gauges),
 	}, srv.Client())
-	wg := startWorkers(t, a, numWorkers)
+	wg := startWorkers(t, a, 2)
 
-	a.report(t.Context(), false)
+	a.report(t.Context())
 	close(a.jobs)
 	wg.Wait()
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	assert.Equal(t, totalMetrics, received, "all metrics must be sent")
-	assert.Greater(t, maxConcurrent, 1, "expected parallel requests with %d workers", numWorkers)
+	assert.Len(t, received, totalMetrics, "all metrics must be sent in a single batch")
 }
 
 func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
@@ -277,7 +274,7 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	a := newTestAgent(t, host, 1, []collector{fc}, srv.Client())
 	wg := startWorkers(t, a, 1)
 
-	a.report(t.Context(), false)
+	a.report(t.Context())
 	close(a.jobs)
 	wg.Wait()
 
@@ -309,9 +306,9 @@ func TestIsRetriableSendError(t *testing.T) {
 // HTTP-статусе (не проблема соединения) агент не выполняет дополнительных
 // попыток — retryIntervals заведомо большие, но тест должен завершиться быстро.
 func TestAgentReportDoesNotRetryOnBusinessError(t *testing.T) {
-	var attempts int32
+	var attempts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&attempts, 1)
+		attempts.Add(1)
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -324,9 +321,11 @@ func TestAgentReportDoesNotRetryOnBusinessError(t *testing.T) {
 		retryIntervals: []time.Duration{time.Minute, time.Minute, time.Minute},
 	}
 
-	err := a.sendMetric(t.Context(), models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))})
+	err := a.sendMetricsBatch(t.Context(), []models.Metrics{
+		{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))},
+	})
 	assert.Error(t, err)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&attempts), "non-connection errors must not be retried")
+	assert.Equal(t, int32(1), attempts.Load(), "non-connection errors must not be retried")
 }
 
 // TestSendDataRetriesOnConnectionRefused проверяет полный retry-путь: агент не
@@ -338,7 +337,7 @@ func TestSendDataRetriesOnConnectionRefused(t *testing.T) {
 	addr := ln.Addr().String()
 	require.NoError(t, ln.Close()) // освобождаем порт — пока никто не слушает
 
-	var received int32
+	var received atomic.Int32
 	go func() {
 		time.Sleep(15 * time.Millisecond) // даём агенту сделать пару неудачных попыток
 		ln2, err := net.Listen("tcp", addr)
@@ -346,8 +345,8 @@ func TestSendDataRetriesOnConnectionRefused(t *testing.T) {
 			return
 		}
 		mux := http.NewServeMux()
-		mux.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&received, 1)
+		mux.HandleFunc("/updates", func(w http.ResponseWriter, r *http.Request) {
+			received.Add(1)
 			w.WriteHeader(http.StatusOK)
 		})
 		httpSrv := &http.Server{Handler: mux}
@@ -362,14 +361,16 @@ func TestSendDataRetriesOnConnectionRefused(t *testing.T) {
 		retryIntervals: []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	err = a.sendMetric(t.Context(), models.Metrics{ID: "x", MType: models.Counter, Delta: ptr(int64(1))})
+	err = a.sendMetricsBatch(t.Context(), []models.Metrics{
+		{ID: "x", MType: models.Counter, Delta: ptr(int64(1))},
+	})
 	require.NoError(t, err, "should eventually succeed once the server starts listening")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&received))
+	assert.Equal(t, int32(1), received.Load())
 }
 
 // --- signing tests ---
 
-func TestSendMetricSetsHashHeaderWhenKeyConfigured(t *testing.T) {
+func TestSendMetricsBatchSetsHashHeaderWhenKeyConfigured(t *testing.T) {
 	var gotHash string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -390,14 +391,14 @@ func TestSendMetricSetsHashHeaderWhenKeyConfigured(t *testing.T) {
 		logger:     testLogger,
 	}
 
-	metric := models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}
-	require.NoError(t, a.sendMetric(t.Context(), metric))
+	metrics := []models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}}
+	require.NoError(t, a.sendMetricsBatch(t.Context(), metrics))
 
 	require.NotEmpty(t, gotHash)
 	assert.Equal(t, sign.Compute(gotBody, "secret"), gotHash)
 }
 
-func TestSendMetricOmitsHashHeaderWhenNoKey(t *testing.T) {
+func TestSendMetricsBatchOmitsHashHeaderWhenNoKey(t *testing.T) {
 	var gotHash string
 	sawHeader := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -413,8 +414,8 @@ func TestSendMetricOmitsHashHeaderWhenNoKey(t *testing.T) {
 		logger:     testLogger,
 	}
 
-	metric := models.Metrics{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}
-	require.NoError(t, a.sendMetric(t.Context(), metric))
+	metrics := []models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}}
+	require.NoError(t, a.sendMetricsBatch(t.Context(), metrics))
 
 	assert.False(t, sawHeader, "no key configured — request must not carry a hash header")
 	assert.Empty(t, gotHash)
