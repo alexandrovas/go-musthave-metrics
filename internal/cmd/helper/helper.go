@@ -19,7 +19,7 @@ func NewLogger(level string, format string) (*slog.Logger, error) {
 		h = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 			Level: l,
 		})
-	case config.JsonLogFormat:
+	case config.JSONLogFormat:
 		h = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: l,
 		})

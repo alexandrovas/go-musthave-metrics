@@ -38,13 +38,15 @@ func cmd() *cobra.Command {
 
 	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
 	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server listen address")
-	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(300*time.Second), "store_interval", "i", "storage save interval (0 - synchronously write)")
-	cmd.PersistentFlags().StringP("file_storage_path", "f", "", "state file storage path")
+	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(300*time.Second), "store-interval", "i", "storage save interval (0 - synchronously write)")
+	cmd.PersistentFlags().StringP("file-storage-path", "f", "", "state file storage path")
 	cmd.PersistentFlags().BoolP("restore", "r", false, "restore previosly saved state")
-	cmd.PersistentFlags().StringP("database_dsn", "d", "", "postgres database dsn")
+	cmd.PersistentFlags().StringP("database-dsn", "d", "", "postgres database dsn")
 	cmd.PersistentFlags().StringP("key", "k", "", "key for request/response signing")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
+	cmd.PersistentFlags().StringP("audit-file", "", "", "path to audit log file (audit disabled if empty)")
+	cmd.PersistentFlags().StringP("audit-url", "", "", "URL to send audit events to (audit disabled if empty)")
 
 	return cmd
 }

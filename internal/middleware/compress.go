@@ -97,8 +97,8 @@ func (c *compressReader) Close() error {
 
 func allowToCompress(contentType string) bool {
 	allowed := []string{
-		contentTypeApplicationJson,
-		contentTypeTextHtml,
+		contentTypeApplicationJSON,
+		contentTypeTextHTML,
 	}
 	return slices.Contains(allowed, contentType)
 }
