@@ -2,17 +2,20 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
@@ -20,16 +23,40 @@ import (
 type Handler struct {
 	service MetricsService
 	logger  *slog.Logger
+	auditor *audit.Subject
 }
 
-func NewHandler(s MetricsService, logger *slog.Logger) *Handler {
+func NewHandler(s MetricsService, logger *slog.Logger, auditor *audit.Subject) *Handler {
 	return &Handler{
 		service: s,
 		logger:  logger,
+		auditor: auditor,
 	}
 }
 
-func (h *Handler) writeJsonBody(w http.ResponseWriter, resp any, statusCode int) {
+// clientIP возвращает IP-адрес клиента без порта.
+func clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
+// notifyAudit рассылает событие аудита наблюдателям в фоне, не задерживая ответ клиенту.
+func (h *Handler) notifyAudit(r *http.Request, metrics []string) {
+	if len(metrics) == 0 {
+		return
+	}
+	event := audit.NewEvent(metrics, clientIP(r))
+	go func() {
+		if err := h.auditor.Notify(context.Background(), event); err != nil {
+			h.logger.Error("audit notify failed", "error", err)
+		}
+	}()
+}
+
+func (h *Handler) writeJSONBody(w http.ResponseWriter, resp any, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
@@ -46,16 +73,16 @@ func decodeMetric(r *http.Request) (models.Metrics, error) {
 	return metric, nil
 }
 
-func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ValueJSON(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
-		h.writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if metric.ID == "" {
-		h.writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errMetricIDIsRequired},
 			http.StatusBadRequest)
 		return
 	}
@@ -65,35 +92,35 @@ func (h *Handler) ValueJson(w http.ResponseWriter, r *http.Request) {
 		metric, err := h.service.GetMetric(r.Context(), metric.MType, metric.ID)
 		if err != nil {
 			if errors.Is(err, service.ErrNotFound) {
-				h.writeJsonBody(w, models.ErrorResponse{Error: service.ErrNotFound},
+				h.writeJSONBody(w, models.ErrorResponse{Error: service.ErrNotFound},
 					http.StatusNotFound)
 				return
 			}
 			h.logger.Error("get metric error", "error", err)
-			h.writeJsonBody(w, models.ErrorResponse{Error: errInternal},
+			h.writeJSONBody(w, models.ErrorResponse{Error: errInternal},
 				http.StatusInternalServerError)
 			return
 		}
 
-		h.writeJsonBody(w, metric, http.StatusOK)
+		h.writeJSONBody(w, metric, http.StatusOK)
 		return
 	default:
-		h.writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errUnknownMetricType},
 			http.StatusBadRequest)
 		return
 	}
 }
 
-func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
-		h.writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if metric.ID == "" {
-		h.writeJsonBody(w, models.ErrorResponse{Error: errMetricIdIsRequired},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errMetricIDIsRequired},
 			http.StatusBadRequest)
 		return
 	}
@@ -101,50 +128,57 @@ func (h *Handler) UpdateMetricJson(w http.ResponseWriter, r *http.Request) {
 	switch metric.MType {
 	case models.Gauge:
 		if metric.Value == nil {
-			h.writeJsonBody(w, models.ErrorResponse{Error: errValueIsRequired},
+			h.writeJSONBody(w, models.ErrorResponse{Error: errValueIsRequired},
 				http.StatusBadRequest)
 			return
 		}
 	case models.Counter:
 		if metric.Delta == nil {
-			h.writeJsonBody(w, models.ErrorResponse{Error: errDeltaIsRequired},
+			h.writeJSONBody(w, models.ErrorResponse{Error: errDeltaIsRequired},
 				http.StatusBadRequest)
 			return
 		}
 	default:
-		h.writeJsonBody(w, models.ErrorResponse{Error: errUnknownMetricType},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errUnknownMetricType},
 			http.StatusBadRequest)
 		return
 	}
 
 	if err := h.service.UpdateMetric(r.Context(), metric); err != nil {
 		h.logger.Error("update metric error", "error", err)
-		h.writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
 			http.StatusInternalServerError)
 		return
 	}
+	h.notifyAudit(r, []string{metric.ID})
 
 	// возвращаем пустой JSON в случае успеха
-	h.writeJsonBody(w, make(map[string]interface{}), http.StatusOK)
+	h.writeJSONBody(w, make(map[string]interface{}), http.StatusOK)
 }
 
-func (h *Handler) BatchUpdateMeticsJson(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) BatchUpdateMeticsJSON(w http.ResponseWriter, r *http.Request) {
 	var metrics []models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
-		h.writeJsonBody(w, models.ErrorResponse{Error: errJSONDecode},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errJSONDecode},
 			http.StatusBadRequest)
 		return
 	}
 
 	if err := h.service.UpdateMetrics(r.Context(), metrics); err != nil {
 		h.logger.Error("update metrics error", "error", err)
-		h.writeJsonBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
+		h.writeJSONBody(w, models.ErrorResponse{Error: errFailedUpdateMetrics},
 			http.StatusInternalServerError)
 		return
 	}
 
+	names := make([]string, len(metrics))
+	for i, m := range metrics {
+		names[i] = m.ID
+	}
+	h.notifyAudit(r, names)
+
 	// возвращаем пустой JSON в случае успеха
-	h.writeJsonBody(w, make(map[string]interface{}), http.StatusOK)
+	h.writeJSONBody(w, make(map[string]interface{}), http.StatusOK)
 }
 
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +213,7 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	h.notifyAudit(r, []string{metric.ID})
 
 	w.WriteHeader(http.StatusOK)
 }

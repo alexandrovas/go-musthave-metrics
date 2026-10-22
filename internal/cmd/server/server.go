@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"sync"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	handlerHttp "github.com/alexandrovas/go-musthave-metrics/internal/handler/http"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
@@ -26,6 +27,19 @@ func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 		cfg:    cfg,
 		logger: logger,
 	}
+}
+
+// newAuditor собирает наблюдателей аудита (файловый и/или HTTP), включённых
+// в конфигурации, и объединяет их в единый субъект рассылки событий.
+func (s *Server) newAuditor() *audit.Subject {
+	var observers []audit.Observer
+	if s.cfg.AuditFile != "" {
+		observers = append(observers, audit.NewFileObserver(s.cfg.AuditFile))
+	}
+	if s.cfg.AuditURL != "" {
+		observers = append(observers, audit.NewHTTPObserver(s.cfg.AuditURL))
+	}
+	return audit.NewSubject(observers...)
 }
 
 func (s *Server) Run() error {
@@ -86,7 +100,7 @@ func (s *Server) Run() error {
 
 	srv := &http.Server{
 		Addr:    s.cfg.Address,
-		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key),
+		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key, s.newAuditor()),
 	}
 
 	wg.Go(func() {
