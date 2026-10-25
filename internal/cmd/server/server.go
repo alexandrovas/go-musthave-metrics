@@ -17,11 +17,13 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
+// Server — сервер метрик: поднимает хранилище и HTTP-обработчики, слушает порт.
 type Server struct {
 	cfg    *config.ServerConfig
 	logger *slog.Logger
 }
 
+// New создаёт сервер метрик с заданной конфигурацией.
 func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:    cfg,
@@ -42,6 +44,8 @@ func (s *Server) newAuditor() *audit.Subject {
 	return audit.NewSubject(observers...)
 }
 
+// Run запускает сервер: инициализирует хранилище, настраивает роутер и слушает
+// адрес из конфигурации до получения сигнала прерывания.
 func (s *Server) Run() error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)

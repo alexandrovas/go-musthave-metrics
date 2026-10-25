@@ -4,18 +4,19 @@ import (
 	"encoding/json"
 )
 
+// MetricType — тип метрики: counter накапливается, gauge хранит мгновенное значение.
 type MetricType string
 
 const (
+	// Counter — счётчик, значение которого только увеличивается на дельту.
 	Counter MetricType = "counter"
-	Gauge   MetricType = "gauge"
+	// Gauge — метрика, хранящая мгновенное числовое значение.
+	Gauge MetricType = "gauge"
 )
 
-// NOTE: Не усложняем пример, вводя иерархическую вложенность структур.
-// Органичиваясь плоской моделью.
-// Delta и Value объявлены через указатели,
-// что бы отличать значение "0", от не заданного значения
-// и соответственно не кодировать в структуру.
+// Metrics — метрика с плоской моделью (без иерархической вложенности).
+// Delta и Value объявлены через указатели, чтобы отличать значение "0"
+// от не заданного значения и, благодаря omitempty, не кодировать его в JSON.
 type Metrics struct {
 	ID    string     `json:"id"`
 	MType MetricType `json:"type"`
@@ -24,10 +25,13 @@ type Metrics struct {
 	Hash  string     `json:"hash,omitempty"`
 }
 
+// ErrorResponse — тело JSON-ответа с ошибкой. Поле Error сериализуется
+// как строка с текстом ошибки.
 type ErrorResponse struct {
 	Error error `json:"error"`
 }
 
+// MarshalJSON сериализует ErrorResponse, заменяя ошибку её строковым представлением.
 func (er ErrorResponse) MarshalJSON() ([]byte, error) {
 	type ErrorResponseAlias ErrorResponse
 	aliasValue := struct {

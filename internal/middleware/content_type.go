@@ -8,6 +8,8 @@ const (
 	contentTypeTextHTML        = "text/html"
 )
 
+// RequireContentTypeJSON пропускает запрос дальше, только если его заголовок
+// Content-Type равен application/json, иначе отвечает 400.
 func RequireContentTypeJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get(contentTypeHeader)

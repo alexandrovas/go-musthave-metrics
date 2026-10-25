@@ -13,6 +13,7 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
+// MetricsService — интерфейс бизнес-логики, используемый обработчиками.
 type MetricsService interface {
 	UpdateMetric(ctx context.Context, metric models.Metrics) error
 	UpdateMetrics(ctx context.Context, metric []models.Metrics) error
@@ -21,6 +22,8 @@ type MetricsService interface {
 	Ping(ctx context.Context) error
 }
 
+// NewRouter собирает chi-роутер со всеми эндпоинтами сервера метрик и
+// middleware (логирование, сжатие, опционально подпись и проверка хеша).
 func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string, auditor *audit.Subject) http.Handler {
 	svc := service.NewMetricsService(repo)
 	h := NewHandler(svc, logger, auditor)

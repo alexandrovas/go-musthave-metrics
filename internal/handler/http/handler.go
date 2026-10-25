@@ -20,12 +20,14 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
+// Handler — HTTP-обработчики эндпоинтов сервера метрик.
 type Handler struct {
 	service MetricsService
 	logger  *slog.Logger
 	auditor *audit.Subject
 }
 
+// NewHandler создаёт обработчики эндпоинтов поверх сервиса метрик s.
 func NewHandler(s MetricsService, logger *slog.Logger, auditor *audit.Subject) *Handler {
 	return &Handler{
 		service: s,
@@ -73,6 +75,7 @@ func decodeMetric(r *http.Request) (models.Metrics, error) {
 	return metric, nil
 }
 
+// ValueJSON обрабатывает POST /value — возвращает метрику по JSON-запросу.
 func (h *Handler) ValueJSON(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
@@ -111,6 +114,7 @@ func (h *Handler) ValueJSON(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// UpdateMetricJSON обрабатывает POST /update — обновляет метрику по JSON-запросу.
 func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	metric, err := decodeMetric(r)
 	if err != nil {
@@ -156,6 +160,7 @@ func (h *Handler) UpdateMetricJSON(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONBody(w, make(map[string]interface{}), http.StatusOK)
 }
 
+// BatchUpdateMeticsJSON обрабатывает POST /updates — пакетно обновляет метрики.
 func (h *Handler) BatchUpdateMeticsJSON(w http.ResponseWriter, r *http.Request) {
 	var metrics []models.Metrics
 	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
@@ -181,6 +186,8 @@ func (h *Handler) BatchUpdateMeticsJSON(w http.ResponseWriter, r *http.Request) 
 	h.writeJSONBody(w, make(map[string]interface{}), http.StatusOK)
 }
 
+// UpdateMetric обрабатывает POST /update/{type}/{name}/{value} — обновляет метрику,
+// передав тип, имя и значение в пути запроса.
 func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := models.MetricType(chi.URLParam(r, "type"))
 	metricName := chi.URLParam(r, "name")
@@ -218,6 +225,8 @@ func (h *Handler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// GetMetric обрабатывает GET /value/{type}/{name} — возвращает значение метрики
+// в текстовом виде.
 func (h *Handler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	mtype := models.MetricType(chi.URLParam(r, "type"))
 	name := chi.URLParam(r, "name")
@@ -265,6 +274,7 @@ const metricsPageHTML = `<!DOCTYPE html>
 
 var metricsPageTmpl = template.Must(template.New("metrics").Parse(metricsPageHTML))
 
+// ListMetrics обрабатывает GET / — отдаёт HTML-страницу со списком всех метрик.
 func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics, err := h.service.GetAllMetrics(r.Context())
 	if err != nil {
@@ -305,6 +315,7 @@ func formatValue(m models.Metrics) string {
 	return ""
 }
 
+// Ping обрабатывает GET /ping — проверяет доступность хранилища.
 func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
 	err := h.service.Ping(r.Context())
 	if err != nil {

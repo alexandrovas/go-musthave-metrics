@@ -14,6 +14,9 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
 
+// MemStorage — потокобезопасное in-memory хранилище метрик.
+// При необходимости умеет синхронно либо периодически сохранять состояние
+// на диск в формате JSON.
 type MemStorage struct {
 	gauges   map[string]float64
 	counters map[string]int64
@@ -23,6 +26,7 @@ type MemStorage struct {
 	logger   *slog.Logger
 }
 
+// NewMemStorage создаёт пустое in-memory хранилище.
 func NewMemStorage(logger *slog.Logger) *MemStorage {
 	return &MemStorage{
 		gauges:   make(map[string]float64),
@@ -38,6 +42,7 @@ func (s *MemStorage) EnableSyncSave(path string) {
 	s.syncPath = path
 }
 
+// UpdateBatch применяет пакет метрик: gauge перезаписывается, counter — увеличивается.
 func (s *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -54,6 +59,7 @@ func (s *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) 
 	return nil
 }
 
+// SetGauge сохраняет значение gauge-метрики.
 func (s *MemStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,6 +74,7 @@ func (s *MemStorage) SetGauge(ctx context.Context, name string, value float64) e
 	return nil
 }
 
+// GetGauge возвращает значение gauge-метрики и признак её наличия.
 func (s *MemStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -76,6 +83,7 @@ func (s *MemStorage) GetGauge(ctx context.Context, name string) (float64, bool, 
 	return v, ok, nil
 }
 
+// AddCounter увеличивает counter-метрику на delta.
 func (s *MemStorage) AddCounter(ctx context.Context, name string, delta int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,6 +98,7 @@ func (s *MemStorage) AddCounter(ctx context.Context, name string, delta int64) e
 	return nil
 }
 
+// GetCounter возвращает значение counter-метрики и признак её наличия.
 func (s *MemStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -231,7 +240,7 @@ func (s *MemStorage) RunPeriodicSave(ctx context.Context, path string, interval 
 	}
 }
 
-// Служебная функция для вывода в консоль текущего состояния хранилища
+// Log выводит в лог текущее состояние хранилища (служебный метод для отладки).
 func (s *MemStorage) Log() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
