@@ -10,13 +10,14 @@ import (
 	"net"
 	"time"
 
-	"github.com/alexandrovas/go-musthave-metrics/internal/models"
-	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 	"github.com/golang-migrate/migrate/v4"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 
 	// Register pgx as the database/sql driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -33,7 +34,8 @@ type PostgresStorage struct {
 
 // NewPostgresStorage открывает пул соединений к PostgreSQL по dsn и сразу же
 // накатывает миграции, чтобы после успешного возврата хранилище было готово к работе.
-func NewPostgresStorage(ctx context.Context, logger *slog.Logger, dsn string) (*PostgresStorage, error) {
+func NewPostgresStorage(ctx context.Context, logger *slog.Logger, dsn string,
+) (*PostgresStorage, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

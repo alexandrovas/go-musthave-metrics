@@ -16,7 +16,7 @@ type benchRepo struct {
 	counters map[string]int64
 }
 
-func (r *benchRepo) SetGauge(context.Context, string, float64) error      { return nil }
+func (r *benchRepo) SetGauge(context.Context, string, float64) error { return nil }
 func (r *benchRepo) GetGauge(context.Context, string) (float64, bool, error) {
 	return 0, false, nil
 }
@@ -24,14 +24,16 @@ func (r *benchRepo) AddCounter(context.Context, string, int64) error { return ni
 func (r *benchRepo) GetCounter(context.Context, string) (int64, bool, error) {
 	return 0, false, nil
 }
+
 func (r *benchRepo) Gauges(context.Context) (map[string]float64, error) {
 	return r.gauges, nil
 }
+
 func (r *benchRepo) Counters(context.Context) (map[string]int64, error) {
 	return r.counters, nil
 }
 func (r *benchRepo) UpdateBatch(context.Context, []models.Metrics) error { return nil }
-func (r *benchRepo) Ping(context.Context) error                         { return nil }
+func (r *benchRepo) Ping(context.Context) error                          { return nil }
 
 // getAllMetricsSink удерживает результат последней итерации, чтобы профиль
 // памяти отражал реально аллоцированные структуры, а не только временные.

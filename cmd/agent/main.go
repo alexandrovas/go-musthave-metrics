@@ -6,10 +6,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/alexandrovas/go-musthave-metrics/internal/cmd/agent"
 	cmdHelper "github.com/alexandrovas/go-musthave-metrics/internal/cmd/helper"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
-	"github.com/spf13/cobra"
 )
 
 func cmd() *cobra.Command {
