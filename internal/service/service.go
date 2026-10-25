@@ -79,7 +79,7 @@ func (s *metricsService) GetAllMetrics(ctx context.Context) ([]models.Metrics, e
 		return nil, err
 	}
 
-	var result []models.Metrics
+	result := make([]models.Metrics, 0, len(gauges)+len(counters))
 	for name, v := range gauges {
 		result = append(result, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
 	}
