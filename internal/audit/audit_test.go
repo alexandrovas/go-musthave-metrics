@@ -56,6 +56,7 @@ func TestNilSubjectNotifyIsNoop(t *testing.T) {
 func TestFileObserverAppendsJSONLines(t *testing.T) {
 	path := t.TempDir() + "/audit.log"
 	o := NewFileObserver(path)
+	defer o.Close()
 
 	e1 := NewEvent([]string{"Alloc"}, "127.0.0.1")
 	e2 := NewEvent([]string{"PollCount"}, "10.0.0.1")
@@ -73,6 +74,29 @@ func TestFileObserverAppendsJSONLines(t *testing.T) {
 		got = append(got, e)
 	}
 	assert.Equal(t, []Event{e1, e2}, got)
+}
+
+func TestFileObserverCloseIsIdempotent(t *testing.T) {
+	path := t.TempDir() + "/audit.log"
+	o := NewFileObserver(path)
+
+	// Close до первой записи — безопасен.
+	require.NoError(t, o.Close())
+
+	require.NoError(t, o.Notify(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1")))
+	require.NoError(t, o.Close())
+	require.NoError(t, o.Close()) // повторный Close — безопасен
+}
+
+func TestSubjectClose(t *testing.T) {
+	o := NewFileObserver(t.TempDir() + "/audit.log")
+	s := NewSubject(o)
+
+	require.NoError(t, s.Notify(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1")))
+	require.NoError(t, s.Close())
+
+	var nilSubject *Subject
+	require.NoError(t, nilSubject.Close())
 }
 
 func splitLines(data []byte) [][]byte {

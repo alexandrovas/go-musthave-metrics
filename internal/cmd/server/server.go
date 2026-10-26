@@ -87,24 +87,12 @@ func (s *Server) Run() error {
 		repo = pgStore
 	}
 
-	// печатаем в консоль текущее состояние хранилища (для дебага)
-	// const storageLogInterval = 5 * time.Second
-	// wg.Go(func() {
-	// 	ticker := time.NewTicker(storageLogInterval)
-	// 	defer ticker.Stop()
-	// 	for {
-	// 		select {
-	// 		case <-ticker.C:
-	// 			repo.Log()
-	// 		case <-ctx.Done():
-	// 			return
-	// 		}
-	// 	}
-	// })
+	auditor := s.newAuditor()
+	defer auditor.Close()
 
 	srv := &http.Server{
 		Addr:    s.cfg.Address,
-		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key, s.newAuditor()),
+		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key, auditor),
 	}
 
 	wg.Go(func() {

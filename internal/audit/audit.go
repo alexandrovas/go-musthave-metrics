@@ -5,6 +5,8 @@ package audit
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -59,4 +61,21 @@ func (s *Subject) Notify(ctx context.Context, event Event) error {
 		})
 	}
 	return g.Wait()
+}
+
+// Close закрывает всех наблюдателей, поддерживающих io.Closer (например,
+// файловый FileObserver). Метод nil-субъекта — no-op.
+func (s *Subject) Close() error {
+	if s == nil {
+		return nil
+	}
+	var errs []error
+	for _, o := range s.observers {
+		if c, ok := o.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
