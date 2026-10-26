@@ -198,8 +198,12 @@ func (o *chanObserver) Notify(_ context.Context, event audit.Event) error {
 func TestUpdateMetricNotifiesAuditor(t *testing.T) {
 	obs := &chanObserver{events: make(chan audit.Event, 1)}
 	repo := repository.NewMemStorage(testLogger)
-	srv := httptest.NewServer(NewRouter(repo, testLogger, "", audit.NewSubject(obs)))
-	t.Cleanup(srv.Close)
+	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
+	srv := httptest.NewServer(NewRouter(repo, testLogger, "", auditor))
+	t.Cleanup(func() {
+		srv.Close()
+		_ = auditor.Close(context.Background())
+	})
 
 	status, _ := request(t, srv, http.MethodPost, "/update/gauge/Alloc/1024")
 	require.Equal(t, http.StatusOK, status)
@@ -217,8 +221,12 @@ func TestUpdateMetricNotifiesAuditor(t *testing.T) {
 func TestBatchUpdateNotifiesAuditorWithAllMetricNames(t *testing.T) {
 	obs := &chanObserver{events: make(chan audit.Event, 1)}
 	repo := repository.NewMemStorage(testLogger)
-	srv := httptest.NewServer(NewRouter(repo, testLogger, "", audit.NewSubject(obs)))
-	t.Cleanup(srv.Close)
+	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
+	srv := httptest.NewServer(NewRouter(repo, testLogger, "", auditor))
+	t.Cleanup(func() {
+		srv.Close()
+		_ = auditor.Close(context.Background())
+	})
 
 	batch := []models.Metrics{
 		{ID: "Alloc", MType: models.Gauge, Value: ptr(1.0)},

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,11 +23,12 @@ import (
 type Handler struct {
 	service MetricsService
 	logger  *slog.Logger
-	auditor *audit.Subject
+	auditor *audit.Dispatcher
 }
 
-// NewHandler создаёт обработчики эндпоинтов поверх сервиса метрик s.
-func NewHandler(s MetricsService, logger *slog.Logger, auditor *audit.Subject) *Handler {
+// NewHandler создаёт обработчики эндпоинтов поверх сервиса метрик s. События
+// аудита асинхронно доставляются диспетчером auditor.
+func NewHandler(s MetricsService, logger *slog.Logger, auditor *audit.Dispatcher) *Handler {
 	return &Handler{
 		service: s,
 		logger:  logger,
@@ -45,17 +45,13 @@ func clientIP(r *http.Request) string {
 	return ip
 }
 
-// notifyAudit рассылает событие аудита наблюдателям в фоне, не задерживая ответ клиенту.
+// notifyAudit формирует событие аудита и передаёт его диспетчеру для
+// асинхронной доставки, не задерживая ответ клиенту.
 func (h *Handler) notifyAudit(r *http.Request, metrics []string) {
 	if len(metrics) == 0 {
 		return
 	}
-	event := audit.NewEvent(metrics, clientIP(r))
-	go func() {
-		if err := h.auditor.Notify(context.Background(), event); err != nil {
-			h.logger.Error("audit notify failed", "error", err)
-		}
-	}()
+	h.auditor.Notify(audit.NewEvent(metrics, clientIP(r)))
 }
 
 func (h *Handler) writeJSONBody(w http.ResponseWriter, resp any, statusCode int) {

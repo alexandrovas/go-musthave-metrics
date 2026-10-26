@@ -5,11 +5,7 @@ package audit
 
 import (
 	"context"
-	"errors"
-	"io"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // Event — событие аудита, формируется после успешной обработки запроса на обновление метрик.
@@ -38,50 +34,3 @@ var (
 	_ Observer = (*FileObserver)(nil)
 	_ Observer = (*HTTPObserver)(nil)
 )
-
-// Subject — источник событий аудита (субъект наблюдения), рассылающий
-// каждое событие всем зарегистрированным наблюдателям.
-type Subject struct {
-	observers []Observer
-}
-
-// NewSubject создаёт субъект аудита с заданным набором наблюдателей.
-func NewSubject(observers ...Observer) *Subject {
-	return &Subject{observers: observers}
-}
-
-// Notify рассылает событие всем наблюдателям параллельно, чтобы медленный
-// или недоступный приёмник не задерживал доставку остальным. Ошибка одного
-// наблюдателя не прерывает рассылку остальным. Вызов на nil-субъекте —
-// no-op, что позволяет безопасно использовать его в коде вызывающей
-// стороны без дополнительных проверок.
-func (s *Subject) Notify(ctx context.Context, event Event) error {
-	if s == nil {
-		return nil
-	}
-
-	var g errgroup.Group
-	for _, o := range s.observers {
-		g.Go(func() error {
-			return o.Notify(ctx, event)
-		})
-	}
-	return g.Wait()
-}
-
-// Close закрывает всех наблюдателей, поддерживающих io.Closer (например,
-// файловый FileObserver). Метод nil-субъекта — no-op.
-func (s *Subject) Close() error {
-	if s == nil {
-		return nil
-	}
-	var errs []error
-	for _, o := range s.observers {
-		if c, ok := o.(io.Closer); ok {
-			if err := c.Close(); err != nil {
-				errs = append(errs, err)
-			}
-		}
-	}
-	return errors.Join(errs...)
-}

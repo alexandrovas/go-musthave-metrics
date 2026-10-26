@@ -44,6 +44,8 @@ type ServerConfig struct {
 	Key             string        `koanf:"key"`
 	AuditFile       string        `koanf:"audit-file"`
 	AuditURL        string        `koanf:"audit-url"`
+	AuditWorkers    int           `koanf:"audit-workers"`
+	AuditQueueSize  int           `koanf:"audit-queue-size"`
 }
 
 // AgentConfig — конфигурация агента сбора метрик.

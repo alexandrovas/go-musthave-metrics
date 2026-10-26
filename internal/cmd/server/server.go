@@ -37,9 +37,9 @@ func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 	}
 }
 
-// newAuditor собирает наблюдателей аудита (файловый и/или HTTP), включённых
-// в конфигурации, и объединяет их в единый субъект рассылки событий.
-func (s *Server) newAuditor() *audit.Subject {
+// auditObservers собирает наблюдателей аудита (файловый и/или HTTP), включённых
+// в конфигурации.
+func (s *Server) auditObservers() []audit.Observer {
 	var observers []audit.Observer
 	if s.cfg.AuditFile != "" {
 		observers = append(observers, audit.NewFileObserver(s.cfg.AuditFile))
@@ -47,7 +47,7 @@ func (s *Server) newAuditor() *audit.Subject {
 	if s.cfg.AuditURL != "" {
 		observers = append(observers, audit.NewHTTPObserver(s.cfg.AuditURL))
 	}
-	return audit.NewSubject(observers...)
+	return observers
 }
 
 // Run запускает сервер: инициализирует хранилище, настраивает роутер и слушает
@@ -93,8 +93,15 @@ func (s *Server) Run() error {
 		repo = pgStore
 	}
 
-	auditor := s.newAuditor()
-	defer auditor.Close()
+	auditor := audit.NewDispatcher(s.logger, s.cfg.AuditWorkers,
+		s.cfg.AuditQueueSize, s.auditObservers()...)
+	// Отдельный, свежий контекст для фазы остановки аудита — сигнальный ctx
+	// выше к этому моменту уже отменён (это он и запустил shutdown), так что
+	// использовать его здесь означало бы нулевой запас времени на дозапись
+	// уже поставленных в очередь событий.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), audit.DefaultDrainTimeout)
+	defer cancelShutdown()
+	defer auditor.Close(shutdownCtx)
 
 	srv := &http.Server{
 		Addr:    s.cfg.Address,

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	cmdHelper "github.com/alexandrovas/go-musthave-metrics/internal/cmd/helper"
 	"github.com/alexandrovas/go-musthave-metrics/internal/cmd/server"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
@@ -47,6 +48,8 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
 	cmd.PersistentFlags().StringP("audit-file", "", "", "path to audit log file (audit disabled if empty)")
 	cmd.PersistentFlags().StringP("audit-url", "", "", "URL to send audit events to (audit disabled if empty)")
+	cmd.PersistentFlags().IntP("audit-workers", "", audit.DefaultWorkers, "number of concurrent audit delivery workers")
+	cmd.PersistentFlags().IntP("audit-queue-size", "", audit.DefaultQueueSize, "audit event queue capacity (events dropped when full)")
 
 	return cmd
 }

@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,33 +26,50 @@ func (o *recordingObserver) Notify(_ context.Context, event Event) error {
 	return o.err
 }
 
-func TestSubjectNotifiesAllObservers(t *testing.T) {
+func TestNotifyObserversNotifiesAllObservers(t *testing.T) {
 	a := &recordingObserver{}
 	b := &recordingObserver{}
-	s := NewSubject(a, b)
+	d := NewDispatcher(nil, 0, 0, a, b)
+	defer d.Close(context.Background())
 
 	event := NewEvent([]string{"Alloc"}, "127.0.0.1")
-	require.NoError(t, s.Notify(context.Background(), event))
+	require.NoError(t, d.notifyObservers(context.Background(), event))
 
 	assert.Equal(t, []Event{event}, a.events)
 	assert.Equal(t, []Event{event}, b.events)
 }
 
-func TestSubjectContinuesAfterObserverError(t *testing.T) {
+func TestNotifyObserversContinuesAfterObserverError(t *testing.T) {
 	failing := &recordingObserver{err: errors.New("boom")}
 	ok := &recordingObserver{}
-	s := NewSubject(failing, ok)
+	d := NewDispatcher(nil, 0, 0, failing, ok)
+	defer d.Close(context.Background())
 
 	event := NewEvent([]string{"Alloc"}, "127.0.0.1")
-	err := s.Notify(context.Background(), event)
+	err := d.notifyObservers(context.Background(), event)
 
 	assert.Error(t, err)
 	assert.Len(t, ok.events, 1)
 }
 
-func TestNilSubjectNotifyIsNoop(t *testing.T) {
-	var s *Subject
-	assert.NoError(t, s.Notify(context.Background(), NewEvent(nil, "")))
+func TestNotifyObserversAggregatesAllObserverErrors(t *testing.T) {
+	errA := errors.New("observer A failed")
+	errB := errors.New("observer B failed")
+	a := &recordingObserver{err: errA}
+	b := &recordingObserver{err: errB}
+	d := NewDispatcher(nil, 0, 0, a, b)
+	defer d.Close(context.Background())
+
+	err := d.notifyObservers(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1"))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errA, "error from the first observer must not be lost")
+	assert.ErrorIs(t, err, errB, "error from the second observer must not be lost")
+}
+
+func TestNilDispatcherNotifyIsNoop(t *testing.T) {
+	var d *Dispatcher
+	d.Notify(NewEvent(nil, "")) // no-op, без паники
 }
 
 func TestFileObserverAppendsJSONLines(t *testing.T) {
@@ -88,15 +107,84 @@ func TestFileObserverCloseIsIdempotent(t *testing.T) {
 	require.NoError(t, o.Close()) // повторный Close — безопасен
 }
 
-func TestSubjectClose(t *testing.T) {
+func TestDispatcherCloseClosesObservers(t *testing.T) {
 	o := NewFileObserver(t.TempDir() + "/audit.log")
-	s := NewSubject(o)
+	d := NewDispatcher(nil, 0, 0, o)
 
-	require.NoError(t, s.Notify(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1")))
-	require.NoError(t, s.Close())
+	require.NoError(t, d.notifyObservers(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1")))
+	require.NoError(t, d.Close(context.Background()))
+}
 
-	var nilSubject *Subject
-	require.NoError(t, nilSubject.Close())
+func TestDispatcherNotifiesObserver(t *testing.T) {
+	o := &recordingObserver{}
+	d := NewDispatcher(nil, 0, 0, o)
+
+	event := NewEvent([]string{"Alloc"}, "127.0.0.1")
+	d.Notify(event)
+	require.NoError(t, d.Close(context.Background()))
+
+	assert.Equal(t, []Event{event}, o.events)
+}
+
+func TestDispatcherNotifyDuringCloseDoesNotPanic(t *testing.T) {
+	d := NewDispatcher(nil, 0, 0, &recordingObserver{})
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 1000 {
+			d.Notify(NewEvent([]string{"Alloc"}, "127.0.0.1"))
+		}
+	})
+
+	require.NoError(t, d.Close(context.Background()))
+	wg.Wait()
+}
+
+func TestDispatcherCloseCancelsSlowDelivery(t *testing.T) {
+	blocking := &blockingObserver{unblocked: make(chan struct{})}
+	defer close(blocking.unblocked)
+	d := NewDispatcher(nil, 0, 0, blocking)
+
+	d.Notify(NewEvent([]string{"Alloc"}, "127.0.0.1"))
+
+	// Короткий дедлайн вместо DefaultDrainTimeout — Close должен прервать
+	// зависшую доставку по истечении переданного ctx, а не ждать его бесконечно.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- d.Close(ctx) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return promptly after ctx deadline")
+	}
+}
+
+type blockingObserver struct {
+	unblocked chan struct{}
+}
+
+func (o *blockingObserver) Notify(ctx context.Context, _ Event) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-o.unblocked:
+		return nil
+	}
+}
+
+func TestDispatcherCloseIsIdempotent(t *testing.T) {
+	d := NewDispatcher(nil, 0, 0, &recordingObserver{})
+
+	require.NoError(t, d.Close(context.Background()))
+	require.NoError(t, d.Close(context.Background())) // повторный Close — безопасен
+
+	var nilDispatcher *Dispatcher
+	require.NoError(t, nilDispatcher.Close(context.Background()))
+	nilDispatcher.Notify(NewEvent(nil, "")) // no-op, без паники
 }
 
 func splitLines(data []byte) [][]byte {

@@ -34,6 +34,8 @@ func newServerFlagSet() *pflag.FlagSet {
 	fs.StringP("key", "k", "", "")
 	fs.StringP("audit-file", "", "", "")
 	fs.StringP("audit-url", "", "", "")
+	fs.IntP("audit-workers", "", 4, "")
+	fs.IntP("audit-queue-size", "", 64, "")
 	fs.StringP("log.level", "", "info", "")
 	fs.StringP("log.format", "", "text", "")
 	return fs
@@ -159,6 +161,8 @@ func TestLoadServerConfig_FromFlags(t *testing.T) {
 	require.NoError(t, fs.Set("key", "flag-key"))
 	require.NoError(t, fs.Set("log.level", "warn"))
 	require.NoError(t, fs.Set("log.format", "json"))
+	require.NoError(t, fs.Set("audit-workers", "8"))
+	require.NoError(t, fs.Set("audit-queue-size", "128"))
 
 	cfg, err := LoadServerConfig(missingConfigPath(t), fs)
 	require.NoError(t, err)
@@ -171,6 +175,8 @@ func TestLoadServerConfig_FromFlags(t *testing.T) {
 	assert.Equal(t, "flag-key", cfg.Key)
 	assert.Equal(t, "warn", cfg.Log.Level)
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
+	assert.Equal(t, 8, cfg.AuditWorkers)
+	assert.Equal(t, 128, cfg.AuditQueueSize)
 }
 
 func TestLoadServerConfig_FromFile(t *testing.T) {
@@ -183,6 +189,8 @@ database-dsn: "postgres://file"
 key: "file-key"
 audit-file: "/tmp/audit.log"
 audit-url: "http://audit.example.com"
+audit-workers: 2
+audit-queue-size: 16
 log:
   level: "debug"
   format: "json"
@@ -199,6 +207,8 @@ log:
 	assert.Equal(t, "file-key", cfg.Key)
 	assert.Equal(t, "/tmp/audit.log", cfg.AuditFile)
 	assert.Equal(t, "http://audit.example.com", cfg.AuditURL)
+	assert.Equal(t, 2, cfg.AuditWorkers)
+	assert.Equal(t, 16, cfg.AuditQueueSize)
 	assert.Equal(t, "debug", cfg.Log.Level)
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
 }
