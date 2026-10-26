@@ -41,6 +41,12 @@ type collector interface {
 	Collect() []collectors.PendingMetric
 }
 
+// Компиляционная проверка: коллекторы удовлетворяют интерфейсу collector.
+var (
+	_ collector = (*collectors.Runtime)(nil)
+	_ collector = (*collectors.Gopsutil)(nil)
+)
+
 // Agent — агент сбора метрик: опрашивает коллекторы и отправляет снимки на сервер.
 type Agent struct {
 	cfg            *config.AgentConfig

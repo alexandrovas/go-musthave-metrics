@@ -33,6 +33,12 @@ type Observer interface {
 	Notify(ctx context.Context, event Event) error
 }
 
+// Компиляционная проверка: наблюдатели удовлетворяют интерфейсу Observer.
+var (
+	_ Observer = (*FileObserver)(nil)
+	_ Observer = (*HTTPObserver)(nil)
+)
+
 // Subject — источник событий аудита (субъект наблюдения), рассылающий
 // каждое событие всем зарегистрированным наблюдателям.
 type Subject struct {

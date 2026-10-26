@@ -22,6 +22,9 @@ type MetricsService interface {
 	Ping(ctx context.Context) error
 }
 
+// Компиляционная проверка: *service.MetricsService реализует MetricsService.
+var _ MetricsService = (*service.MetricsService)(nil)
+
 // NewRouter собирает chi-роутер со всеми эндпоинтами сервера метрик и
 // middleware (логирование, сжатие, опционально подпись и проверка хеша).
 func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string, auditor *audit.Subject) http.Handler {

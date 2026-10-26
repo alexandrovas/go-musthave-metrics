@@ -17,6 +17,12 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
+// Компиляционная проверка: реализации хранилищ удовлетворяют service.Repository.
+var (
+	_ service.Repository = (*repository.MemStorage)(nil)
+	_ service.Repository = (*repository.PostgresStorage)(nil)
+)
+
 // Server — сервер метрик: поднимает хранилище и HTTP-обработчики, слушает порт.
 type Server struct {
 	cfg    *config.ServerConfig
