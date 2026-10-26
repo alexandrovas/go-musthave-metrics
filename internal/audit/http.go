@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
+
+	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 )
 
 // HTTPObserver — наблюдатель, отправляющий события аудита POST-запросом
@@ -30,20 +34,46 @@ func (o *HTTPObserver) Notify(ctx context.Context, event Event) error {
 		return fmt.Errorf("marshal audit event: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.url, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("create audit request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
+	return retry.Do(ctx, isRetriableHTTPError, retry.Intervals, func() error {
+		// Запрос создаём внутри попытки, чтобы при повторе тело читалось заново.
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.url, bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("create audit request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := o.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("send audit event: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := o.client.Do(req)
+		if err != nil {
+			return &auditSendError{err: fmt.Errorf("send audit event: %w", err)}
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("audit endpoint %s returned status %d", o.url, resp.StatusCode)
+		if resp.StatusCode >= 300 {
+			return &auditSendError{
+				status: resp.StatusCode,
+				err:    fmt.Errorf("audit endpoint %s returned status %d", o.url, resp.StatusCode),
+			}
+		}
+		return nil
+	})
+}
+
+// auditSendError — ошибка отправки события аудита. status хранит HTTP-статус
+// ответа (0, если ответ не был получен — сетевая ошибка).
+type auditSendError struct {
+	status int
+	err    error
+}
+
+func (e *auditSendError) Error() string { return e.err.Error() }
+func (e *auditSendError) Unwrap() error { return e.err }
+
+// isRetriableHTTPError сообщает, стоит ли повторить отправку события аудита:
+// временные сетевые ошибки и 5xx-ответы считаются повторяемыми, остальные — нет.
+func isRetriableHTTPError(err error) bool {
+	if se, ok := errors.AsType[*auditSendError](err); ok && se.status >= 500 {
+		return true
 	}
-	return nil
+	_, ok := errors.AsType[net.Error](err)
+	return ok
 }

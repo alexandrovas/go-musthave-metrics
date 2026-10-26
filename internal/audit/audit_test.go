@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -110,12 +111,31 @@ func TestHTTPObserverPostsEvent(t *testing.T) {
 }
 
 func TestHTTPObserverReturnsErrorOnNonSuccessStatus(t *testing.T) {
+	// 4xx — не-retriable ошибка: Notify должен вернуть её сразу, без повторов.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer srv.Close()
 
 	o := NewHTTPObserver(srv.URL)
 	err := o.Notify(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1"))
 	assert.Error(t, err)
+}
+
+func TestHTTPObserverRetriesOnServerError(t *testing.T) {
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	o := NewHTTPObserver(srv.URL)
+	err := o.Notify(context.Background(), NewEvent([]string{"Alloc"}, "127.0.0.1"))
+
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), attempts.Load())
 }
