@@ -17,35 +17,43 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// LogFormat — формат логов.
 type LogFormat string
 
 const (
-	JsonLogFormat LogFormat = "json"
+	// JSONLogFormat — логи в формате JSON.
+	JSONLogFormat LogFormat = "json"
+	// TextLogFormat — логи в текстовом формате.
 	TextLogFormat LogFormat = "text"
 )
 
+// LogConfig — настройки логирования (уровень и формат).
 type LogConfig struct {
 	Level  string    `koanf:"level"`
 	Format LogFormat `koanf:"format"`
 }
 
-// конфигурация сервера
+// ServerConfig — конфигурация сервера.
 type ServerConfig struct {
 	Address         string        `koanf:"address"`
 	Log             LogConfig     `koanf:"log"`
-	StoreInterval   time.Duration `koanf:"store_interval"`
-	FileStoragePath string        `koanf:"file_storage_path"`
+	StoreInterval   time.Duration `koanf:"store-interval"`
+	FileStoragePath string        `koanf:"file-storage-path"`
 	RestoreState    bool          `koanf:"restore"`
-	DatabaseDSN     string        `koanf:"database_dsn"`
+	DatabaseDSN     string        `koanf:"database-dsn"`
 	Key             string        `koanf:"key"`
+	AuditFile       string        `koanf:"audit-file"`
+	AuditURL        string        `koanf:"audit-url"`
+	AuditWorkers    int           `koanf:"audit-workers"`
+	AuditQueueSize  int           `koanf:"audit-queue-size"`
 }
 
-// конфигурация агента
+// AgentConfig — конфигурация агента сбора метрик.
 type AgentConfig struct {
 	ServerAddress  string        `koanf:"address"`
-	PollInterval   time.Duration `koanf:"poll_interval"`
-	ReportInterval time.Duration `koanf:"report_interval"`
-	RateLimit      uint16        `koanf:"rate_limit"`
+	PollInterval   time.Duration `koanf:"poll-interval"`
+	ReportInterval time.Duration `koanf:"report-interval"`
+	RateLimit      uint16        `koanf:"rate-limit"`
 	Log            LogConfig     `koanf:"log"`
 	Key            string        `koanf:"key"`
 }
@@ -99,6 +107,8 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 		TransformFunc: func(k, v string) (string, any) {
 			// Transform the key: SERVER__ADDRESS -> server.address
 			k = strings.ReplaceAll(strings.ToLower(k), "__", ".")
+			// Transform the key: SOME_FLAG -> some-flag
+			k = strings.ReplaceAll(strings.ToLower(k), "_", "-")
 			return k, v
 		},
 	}), nil); err != nil {
@@ -120,6 +130,8 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 	return nil
 }
 
+// LoadServerConfig загружает конфигурацию сервера из файла, флагов и переменных
+// окружения (приоритет по возрастанию: файл < флаги < окружение).
 func LoadServerConfig(configPath string, flags *pflag.FlagSet) (*ServerConfig, error) {
 	var cfg ServerConfig
 	if err := loadInto(configPath, flags, &cfg); err != nil {
@@ -128,19 +140,21 @@ func LoadServerConfig(configPath string, flags *pflag.FlagSet) (*ServerConfig, e
 	return &cfg, nil
 }
 
+// LoadAgentConfig загружает конфигурацию агента и валидирует, что poll-interval,
+// report-interval и rate-limit строго положительны.
 func LoadAgentConfig(configPath string, flags *pflag.FlagSet) (*AgentConfig, error) {
 	var cfg AgentConfig
 	if err := loadInto(configPath, flags, &cfg); err != nil {
 		return nil, err
 	}
 	if cfg.PollInterval <= 0 {
-		return nil, fmt.Errorf("poll_interval must be strictly positive, got %s", cfg.PollInterval)
+		return nil, fmt.Errorf("poll-interval must be strictly positive, got %s", cfg.PollInterval)
 	}
 	if cfg.ReportInterval <= 0 {
-		return nil, fmt.Errorf("report_interval must be strictly positive, got %s", cfg.ReportInterval)
+		return nil, fmt.Errorf("report-interval must be strictly positive, got %s", cfg.ReportInterval)
 	}
 	if cfg.RateLimit <= 0 {
-		return nil, fmt.Errorf("rate_limit must be strictly positive, got %d", cfg.RateLimit)
+		return nil, fmt.Errorf("rate-limit must be strictly positive, got %d", cfg.RateLimit)
 	}
 	return &cfg, nil
 }

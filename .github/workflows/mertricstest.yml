@@ -78,7 +78,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           metricstest -test.v -test.run=^TestIteration1$ \
             -binary-path=cmd/server/server
@@ -103,7 +108,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           metricstest -test.v -test.run=^TestIteration2[AB]*$ \
             -source-path=. \
@@ -123,7 +133,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           metricstest -test.v -test.run=^TestIteration3[AB]*$ \
             -source-path=. \
@@ -143,7 +158,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -166,7 +186,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -188,7 +213,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -209,7 +239,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -229,7 +264,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -248,7 +288,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -267,7 +312,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -285,7 +335,12 @@ jobs:
           github.head_ref == 'iter11' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -302,7 +357,12 @@ jobs:
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter12' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -318,7 +378,12 @@ jobs:
         if: |
           github.ref == 'refs/heads/main' ||
           github.head_ref == 'iter13' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -333,7 +398,12 @@ jobs:
       - name: "Code increment #14"
         if: |
           github.ref == 'refs/heads/main' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           SERVER_PORT=$(random unused-port)
           ADDRESS="localhost:${SERVER_PORT}"
@@ -349,6 +419,11 @@ jobs:
       - name: "Code increment #14 (race detection)"
         if: |
           github.ref == 'refs/heads/main' ||
-          github.head_ref == 'iter14'
+          github.head_ref == 'iter14' ||
+          github.head_ref == 'iter15' ||
+          github.head_ref == 'iter16' ||
+          github.head_ref == 'iter17' ||
+          github.head_ref == 'iter18' ||
+          github.head_ref == 'iter19'
         run: |
           go test -v -race ./...

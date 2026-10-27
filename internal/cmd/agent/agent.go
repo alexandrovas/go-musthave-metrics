@@ -41,6 +41,13 @@ type collector interface {
 	Collect() []collectors.PendingMetric
 }
 
+// Компиляционная проверка: коллекторы удовлетворяют интерфейсу collector.
+var (
+	_ collector = (*collectors.Runtime)(nil)
+	_ collector = (*collectors.Gopsutil)(nil)
+)
+
+// Agent — агент сбора метрик: опрашивает коллекторы и отправляет снимки на сервер.
 type Agent struct {
 	cfg            *config.AgentConfig
 	collectors     []collector
@@ -50,6 +57,7 @@ type Agent struct {
 	retryIntervals []time.Duration
 }
 
+// New создаёт агента с коллекторами runtime- и системных метрик.
 func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 	return &Agent{
 		cfg: cfg,
@@ -66,6 +74,8 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 	}
 }
 
+// Run запускает циклы опроса метрик и их отправки на сервер до получения
+// сигнала прерывания.
 func (a *Agent) Run() error {
 	ctx := context.Background()
 

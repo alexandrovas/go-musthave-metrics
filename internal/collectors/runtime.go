@@ -11,12 +11,14 @@ type Runtime struct {
 	*baseCollector
 }
 
+// NewRuntime создаёт коллектор runtime-метрик Go.
 func NewRuntime(logger *slog.Logger) *Runtime {
 	return &Runtime{
 		baseCollector: newBaseCollector(logger),
 	}
 }
 
+// Poll снимает текущие runtime-метрики (память, GC и т.д.) во внутреннее хранилище.
 func (s *Runtime) Poll() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -54,6 +56,7 @@ func (s *Runtime) Poll() {
 	s.mu.Unlock()
 }
 
+// Collect возвращает снимок накопленных runtime-метрик.
 func (s *Runtime) Collect() []PendingMetric {
 	return s.drain()
 }

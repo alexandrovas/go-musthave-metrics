@@ -13,12 +13,14 @@ type Gopsutil struct {
 	*baseCollector
 }
 
+// NewGopsutil создаёт коллектор системных метрик (память, CPU).
 func NewGopsutil(logger *slog.Logger) *Gopsutil {
 	return &Gopsutil{
 		baseCollector: newBaseCollector(logger),
 	}
 }
 
+// Poll снимает системные метрики (виртуальная память и загрузка CPU) в хранилище.
 func (s *Gopsutil) Poll() {
 	vm, err := mem.VirtualMemory()
 	if err != nil {
@@ -44,6 +46,7 @@ func (s *Gopsutil) Poll() {
 	s.mu.Unlock()
 }
 
+// Collect возвращает снимок накопленных системных метрик.
 func (s *Gopsutil) Collect() []PendingMetric {
 	return s.drain()
 }

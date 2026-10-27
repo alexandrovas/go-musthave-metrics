@@ -10,17 +10,26 @@ import (
 	"os/signal"
 	"sync"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	handlerHttp "github.com/alexandrovas/go-musthave-metrics/internal/handler/http"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
+// Компиляционная проверка: реализации хранилищ удовлетворяют service.Repository.
+var (
+	_ service.Repository = (*repository.MemStorage)(nil)
+	_ service.Repository = (*repository.PostgresStorage)(nil)
+)
+
+// Server — сервер метрик: поднимает хранилище и HTTP-обработчики, слушает порт.
 type Server struct {
 	cfg    *config.ServerConfig
 	logger *slog.Logger
 }
 
+// New создаёт сервер метрик с заданной конфигурацией.
 func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 	return &Server{
 		cfg:    cfg,
@@ -28,6 +37,21 @@ func New(cfg *config.ServerConfig, logger *slog.Logger) *Server {
 	}
 }
 
+// auditObservers собирает наблюдателей аудита (файловый и/или HTTP), включённых
+// в конфигурации.
+func (s *Server) auditObservers() []audit.Observer {
+	var observers []audit.Observer
+	if s.cfg.AuditFile != "" {
+		observers = append(observers, audit.NewFileObserver(s.cfg.AuditFile))
+	}
+	if s.cfg.AuditURL != "" {
+		observers = append(observers, audit.NewHTTPObserver(s.cfg.AuditURL))
+	}
+	return observers
+}
+
+// Run запускает сервер: инициализирует хранилище, настраивает роутер и слушает
+// адрес из конфигурации до получения сигнала прерывания.
 func (s *Server) Run() error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -69,24 +93,12 @@ func (s *Server) Run() error {
 		repo = pgStore
 	}
 
-	// печатаем в консоль текущее состояние хранилища (для дебага)
-	// const storageLogInterval = 5 * time.Second
-	// wg.Go(func() {
-	// 	ticker := time.NewTicker(storageLogInterval)
-	// 	defer ticker.Stop()
-	// 	for {
-	// 		select {
-	// 		case <-ticker.C:
-	// 			repo.Log()
-	// 		case <-ctx.Done():
-	// 			return
-	// 		}
-	// 	}
-	// })
+	auditor := audit.NewDispatcher(s.logger, s.cfg.AuditWorkers,
+		s.cfg.AuditQueueSize, s.auditObservers()...)
 
 	srv := &http.Server{
 		Addr:    s.cfg.Address,
-		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key),
+		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key, auditor),
 	}
 
 	wg.Go(func() {
@@ -100,6 +112,16 @@ func (s *Server) Run() error {
 	err := srv.ListenAndServe()
 	cancel()
 	wg.Wait()
+
+	// К этому моменту сервер уже остановлен: Shutdown дождался завершения всех
+	// активных HTTP-обработчиков, значит все синхронные вызовы notifyAudit тоже
+	// завершились. Создаем отдельный контекст с таймаутом 10 сек, чтоб отправить все события
+	// аудита из очереди.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), audit.DefaultDrainTimeout)
+	defer cancelShutdown()
+	if closeErr := auditor.Close(shutdownCtx); closeErr != nil {
+		s.logger.Error("audit dispatcher close", "error", closeErr)
+	}
 
 	if !errors.Is(err, http.ErrServerClosed) {
 		return err

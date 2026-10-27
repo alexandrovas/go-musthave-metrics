@@ -7,11 +7,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/middleware"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
+// MetricsService — интерфейс бизнес-логики, используемый обработчиками.
 type MetricsService interface {
 	UpdateMetric(ctx context.Context, metric models.Metrics) error
 	UpdateMetrics(ctx context.Context, metric []models.Metrics) error
@@ -20,9 +22,14 @@ type MetricsService interface {
 	Ping(ctx context.Context) error
 }
 
-func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string) http.Handler {
+// Компиляционная проверка: *service.MetricsService реализует MetricsService.
+var _ MetricsService = (*service.MetricsService)(nil)
+
+// NewRouter собирает chi-роутер со всеми эндпоинтами сервера метрик и
+// middleware (логирование, сжатие, опционально подпись и проверка хеша).
+func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string, auditor *audit.Dispatcher) http.Handler {
 	svc := service.NewMetricsService(repo)
-	h := NewHandler(svc, logger)
+	h := NewHandler(svc, logger, auditor)
 
 	r := chi.NewRouter()
 
@@ -38,15 +45,15 @@ func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string) htt
 		)
 	}
 
-	jsonRouter := r.With(middleware.RequireContentTypeJson)
-	jsonRouter.Post("/update", h.UpdateMetricJson)
-	jsonRouter.Post("/update/", h.UpdateMetricJson) // для успешного прохождения тестов в Github
-	jsonRouter.Post("/updates", h.BatchUpdateMeticsJson)
-	jsonRouter.Post("/updates/", h.BatchUpdateMeticsJson) // для успешного прохождения тестов в Github
+	jsonRouter := r.With(middleware.RequireContentTypeJSON)
+	jsonRouter.Post("/update", h.UpdateMetricJSON)
+	jsonRouter.Post("/update/", h.UpdateMetricJSON) // для успешного прохождения тестов в Github
+	jsonRouter.Post("/updates", h.BatchUpdateMeticsJSON)
+	jsonRouter.Post("/updates/", h.BatchUpdateMeticsJSON) // для успешного прохождения тестов в Github
 	r.Post("/update/{type}/{name}/{value}", h.UpdateMetric)
 
-	jsonRouter.Post("/value", h.ValueJson)
-	jsonRouter.Post("/value/", h.ValueJson) // для успешного прохождения тестов в Github
+	jsonRouter.Post("/value", h.ValueJSON)
+	jsonRouter.Post("/value/", h.ValueJSON) // для успешного прохождения тестов в Github
 	r.Get("/value/{type}/{name}", h.GetMetric)
 
 	r.Get("/ping", h.Ping)

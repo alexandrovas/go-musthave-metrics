@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,10 +10,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	models "github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 )
@@ -22,7 +25,7 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	repo := repository.NewMemStorage(testLogger)
-	srv := httptest.NewServer(NewRouter(repo, testLogger, ""))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, "", nil))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -172,7 +175,7 @@ func TestListMetricsEscapesHTML(t *testing.T) {
 	repo := repository.NewMemStorage(testLogger)
 	require.NoError(t, repo.SetGauge(t.Context(), `<script>alert(1)</script>`, 42))
 
-	srv := httptest.NewServer(NewRouter(repo, testLogger, ""))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, "", nil))
 	defer srv.Close()
 
 	_, body := request(t, srv, http.MethodGet, "/")
@@ -182,6 +185,63 @@ func TestListMetricsEscapesHTML(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+type chanObserver struct {
+	events chan audit.Event
+}
+
+func (o *chanObserver) Notify(_ context.Context, event audit.Event) error {
+	o.events <- event
+	return nil
+}
+
+func TestUpdateMetricNotifiesAuditor(t *testing.T) {
+	obs := &chanObserver{events: make(chan audit.Event, 1)}
+	repo := repository.NewMemStorage(testLogger)
+	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
+	srv := httptest.NewServer(NewRouter(repo, testLogger, "", auditor))
+	t.Cleanup(func() {
+		srv.Close()
+		_ = auditor.Close(context.Background())
+	})
+
+	status, _ := request(t, srv, http.MethodPost, "/update/gauge/Alloc/1024")
+	require.Equal(t, http.StatusOK, status)
+
+	select {
+	case event := <-obs.events:
+		assert.Equal(t, []string{"Alloc"}, event.Metrics)
+		assert.NotEmpty(t, event.IPAddress)
+		assert.NotZero(t, event.TS)
+	case <-time.After(time.Second):
+		t.Fatal("audit observer was not notified")
+	}
+}
+
+func TestBatchUpdateNotifiesAuditorWithAllMetricNames(t *testing.T) {
+	obs := &chanObserver{events: make(chan audit.Event, 1)}
+	repo := repository.NewMemStorage(testLogger)
+	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
+	srv := httptest.NewServer(NewRouter(repo, testLogger, "", auditor))
+	t.Cleanup(func() {
+		srv.Close()
+		_ = auditor.Close(context.Background())
+	})
+
+	batch := []models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: ptr(1.0)},
+		{ID: "Frees", MType: models.Counter, Delta: ptr(int64(1))},
+	}
+	status, _ := jsonRequest(t, srv, http.MethodPost, "/updates", batch)
+	require.Equal(t, http.StatusOK, status)
+
+	select {
+	case event := <-obs.events:
+		assert.ElementsMatch(t, []string{"Alloc", "Frees"}, event.Metrics)
+	case <-time.After(time.Second):
+		t.Fatal("audit observer was not notified")
+	}
+}
 
 func TestUpdateJSON(t *testing.T) {
 	tests := []struct {

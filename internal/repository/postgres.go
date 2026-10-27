@@ -10,13 +10,14 @@ import (
 	"net"
 	"time"
 
-	"github.com/alexandrovas/go-musthave-metrics/internal/models"
-	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 	"github.com/golang-migrate/migrate/v4"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 
 	// Register pgx as the database/sql driver
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -33,7 +34,8 @@ type PostgresStorage struct {
 
 // NewPostgresStorage открывает пул соединений к PostgreSQL по dsn и сразу же
 // накатывает миграции, чтобы после успешного возврата хранилище было готово к работе.
-func NewPostgresStorage(ctx context.Context, logger *slog.Logger, dsn string) (*PostgresStorage, error) {
+func NewPostgresStorage(ctx context.Context, logger *slog.Logger, dsn string,
+) (*PostgresStorage, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -80,6 +82,7 @@ func isRetriableDBError(err error) bool {
 	return ok
 }
 
+// UpdateBatch применяет пакет метрик в одной транзакции.
 func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
@@ -113,6 +116,7 @@ func (s *PostgresStorage) UpdateBatch(ctx context.Context, metrics []models.Metr
 		})
 }
 
+// SetGauge сохраняет значение gauge-метрики (upsert).
 func (s *PostgresStorage) SetGauge(ctx context.Context, name string, value float64) error {
 	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
 		func() error {
@@ -136,6 +140,7 @@ func (s *PostgresStorage) setGauge(ctx context.Context, name string, value float
 	return nil
 }
 
+// GetGauge возвращает значение gauge-метрики и признак её наличия.
 func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, bool, error) {
 	var v float64
 	var ok bool
@@ -160,6 +165,7 @@ func (s *PostgresStorage) GetGauge(ctx context.Context, name string) (float64, b
 	return v, ok, nil
 }
 
+// AddCounter увеличивает counter-метрику на delta (upsert).
 func (s *PostgresStorage) AddCounter(ctx context.Context, name string, delta int64) error {
 	return retry.Do(ctx, isRetriableDBError, retry.Intervals,
 		func() error {
@@ -183,6 +189,7 @@ func (s *PostgresStorage) addCounter(ctx context.Context, name string, delta int
 	return nil
 }
 
+// GetCounter возвращает значение counter-метрики и признак её наличия.
 func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, bool, error) {
 	var d int64
 	var ok bool
@@ -207,6 +214,7 @@ func (s *PostgresStorage) GetCounter(ctx context.Context, name string) (int64, b
 	return d, ok, nil
 }
 
+// Gauges возвращает все gauge-метрики.
 func (s *PostgresStorage) Gauges(ctx context.Context) (map[string]float64, error) {
 	result := make(map[string]float64)
 	err := retry.Do(ctx, isRetriableDBError, retry.Intervals,
@@ -235,6 +243,7 @@ func (s *PostgresStorage) Gauges(ctx context.Context) (map[string]float64, error
 	return result, nil
 }
 
+// Counters возвращает все counter-метрики.
 func (s *PostgresStorage) Counters(ctx context.Context) (map[string]int64, error) {
 	result := make(map[string]int64)
 	err := retry.Do(ctx, isRetriableDBError, retry.Intervals,

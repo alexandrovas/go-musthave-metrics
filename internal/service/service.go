@@ -7,8 +7,11 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 )
 
+// ErrNotFound возвращается методами чтения, когда запрошенная метрика отсутствует.
 var ErrNotFound = errors.New("metric not found")
 
+// Repository — хранилище метрик, абстрагирующее источник данных
+// (in-memory или PostgreSQL) от бизнес-логики сервиса.
 type Repository interface {
 	SetGauge(ctx context.Context, name string, value float64) error
 	GetGauge(ctx context.Context, name string) (float64, bool, error)
@@ -20,21 +23,26 @@ type Repository interface {
 	Ping(ctx context.Context) error
 }
 
-type metricsService struct {
+// MetricsService — сервис метрик, реализующий бизнес-логику поверх Repository.
+// Создавать экземпляры следует через NewMetricsService, т.к. поле repo скрыто.
+type MetricsService struct {
 	repo Repository
 }
 
-func NewMetricsService(repo Repository) *metricsService {
-	return &metricsService{
+// NewMetricsService создаёт сервис метрик поверх переданного хранилища repo.
+func NewMetricsService(repo Repository) *MetricsService {
+	return &MetricsService{
 		repo: repo,
 	}
 }
 
-func (s *metricsService) UpdateMetrics(ctx context.Context, metric []models.Metrics) error {
+// UpdateMetrics пакетно обновляет набор метрик в хранилище.
+func (s *MetricsService) UpdateMetrics(ctx context.Context, metric []models.Metrics) error {
 	return s.repo.UpdateBatch(ctx, metric)
 }
 
-func (s *metricsService) UpdateMetric(ctx context.Context, metric models.Metrics) error {
+// UpdateMetric обновляет одну метрику в хранилище в зависимости от её типа.
+func (s *MetricsService) UpdateMetric(ctx context.Context, metric models.Metrics) error {
 	switch metric.MType {
 	case models.Gauge:
 		return s.repo.SetGauge(ctx, metric.ID, *metric.Value)
@@ -45,7 +53,8 @@ func (s *metricsService) UpdateMetric(ctx context.Context, metric models.Metrics
 	}
 }
 
-func (s *metricsService) GetMetric(ctx context.Context, mtype models.MetricType, name string) (models.Metrics, error) {
+// GetMetric возвращает метрику заданного типа и имени; при отсутствии — ErrNotFound.
+func (s *MetricsService) GetMetric(ctx context.Context, mtype models.MetricType, name string) (models.Metrics, error) {
 	switch mtype {
 	case models.Gauge:
 		v, ok, err := s.repo.GetGauge(ctx, name)
@@ -69,7 +78,8 @@ func (s *metricsService) GetMetric(ctx context.Context, mtype models.MetricType,
 	return models.Metrics{}, ErrNotFound
 }
 
-func (s *metricsService) GetAllMetrics(ctx context.Context) ([]models.Metrics, error) {
+// GetAllMetrics возвращает срез всех метрик, накопленных в хранилище.
+func (s *MetricsService) GetAllMetrics(ctx context.Context) ([]models.Metrics, error) {
 	gauges, err := s.repo.Gauges(ctx)
 	if err != nil {
 		return nil, err
@@ -79,7 +89,7 @@ func (s *metricsService) GetAllMetrics(ctx context.Context) ([]models.Metrics, e
 		return nil, err
 	}
 
-	var result []models.Metrics
+	result := make([]models.Metrics, 0, len(gauges)+len(counters))
 	for name, v := range gauges {
 		result = append(result, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
 	}
@@ -89,6 +99,7 @@ func (s *metricsService) GetAllMetrics(ctx context.Context) ([]models.Metrics, e
 	return result, nil
 }
 
-func (s *metricsService) Ping(ctx context.Context) error {
+// Ping проверяет доступность нижележащего хранилища.
+func (s *MetricsService) Ping(ctx context.Context) error {
 	return s.repo.Ping(ctx)
 }

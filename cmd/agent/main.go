@@ -6,10 +6,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/alexandrovas/go-musthave-metrics/internal/cmd/agent"
 	cmdHelper "github.com/alexandrovas/go-musthave-metrics/internal/cmd/helper"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
-	"github.com/spf13/cobra"
 )
 
 func cmd() *cobra.Command {
@@ -37,9 +38,9 @@ func cmd() *cobra.Command {
 
 	cmd.PersistentFlags().StringVarP(&configFile, "config", "c", "config.yaml", "config file path")
 	cmd.PersistentFlags().StringP("address", "a", "localhost:8080", "server address")
-	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(2*time.Second), "poll_interval", "p", "Metrics poll interval (e.g. 2s or 2)")
-	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(10*time.Second), "report_interval", "r", "Metrics report interval (e.g. 10s or 10)")
-	cmd.PersistentFlags().Uint16P("rate_limit", "l", 5, "max number of simultaneously outgoing requests to the server")
+	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(2*time.Second), "poll-interval", "p", "Metrics poll interval (e.g. 2s or 2)")
+	cmd.PersistentFlags().VarP(cmdHelper.NewDurationValue(10*time.Second), "report-interval", "r", "Metrics report interval (e.g. 10s or 10)")
+	cmd.PersistentFlags().Uint16P("rate-limit", "l", 5, "max number of simultaneously outgoing requests to the server")
 	cmd.PersistentFlags().StringP("log.level", "", "info", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringP("log.format", "", "text", "log format (text, json)")
 	cmd.PersistentFlags().StringP("key", "k", "", "key for request signing")

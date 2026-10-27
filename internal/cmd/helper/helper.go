@@ -8,6 +8,7 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 )
 
+// NewLogger создаёт slog.Logger с заданным уровнем и форматом (json/text).
 func NewLogger(level string, format string) (*slog.Logger, error) {
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(level)); err != nil {
@@ -19,7 +20,7 @@ func NewLogger(level string, format string) (*slog.Logger, error) {
 		h = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 			Level: l,
 		})
-	case config.JsonLogFormat:
+	case config.JSONLogFormat:
 		h = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: l,
 		})
