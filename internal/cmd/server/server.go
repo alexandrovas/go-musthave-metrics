@@ -95,13 +95,6 @@ func (s *Server) Run() error {
 
 	auditor := audit.NewDispatcher(s.logger, s.cfg.AuditWorkers,
 		s.cfg.AuditQueueSize, s.auditObservers()...)
-	// Отдельный, свежий контекст для фазы остановки аудита — сигнальный ctx
-	// выше к этому моменту уже отменён (это он и запустил shutdown), так что
-	// использовать его здесь означало бы нулевой запас времени на дозапись
-	// уже поставленных в очередь событий.
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), audit.DefaultDrainTimeout)
-	defer cancelShutdown()
-	defer auditor.Close(shutdownCtx)
 
 	srv := &http.Server{
 		Addr:    s.cfg.Address,
@@ -119,6 +112,16 @@ func (s *Server) Run() error {
 	err := srv.ListenAndServe()
 	cancel()
 	wg.Wait()
+
+	// К этому моменту сервер уже остановлен: Shutdown дождался завершения всех
+	// активных HTTP-обработчиков, значит все синхронные вызовы notifyAudit тоже
+	// завершились. Создаем отдельный контекст с таймаутом 10 сек, чтоб отправить все события
+	// аудита из очереди.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), audit.DefaultDrainTimeout)
+	defer cancelShutdown()
+	if closeErr := auditor.Close(shutdownCtx); closeErr != nil {
+		s.logger.Error("audit dispatcher close", "error", closeErr)
+	}
 
 	if !errors.Is(err, http.ErrServerClosed) {
 		return err
