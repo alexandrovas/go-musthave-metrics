@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -9,23 +8,20 @@ import (
 )
 
 // NewLogger создаёт slog.Logger с заданным уровнем и форматом (json/text).
-func NewLogger(level string, format string) (*slog.Logger, error) {
-	var l slog.Level
-	if err := l.UnmarshalText([]byte(level)); err != nil {
-		return nil, err
-	}
+// На вход в параметр format должно приходить уже провалидированное значение config.LogFormat,
+// поэтому дополнительную проверку тут не выполняем.
+func NewLogger(level slog.Level, format config.LogFormat) *slog.Logger {
 	var h slog.Handler
-	switch config.LogFormat(format) {
-	case config.TextLogFormat:
-		h = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: l,
-		})
+	switch format {
 	case config.JSONLogFormat:
-		h = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: l,
+		h = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: level,
 		})
+	// по умолчанию пишем логи в текстовом формате
 	default:
-		return nil, fmt.Errorf("unexpected log format: %s", format)
+		h = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: level,
+		})
 	}
-	return slog.New(h), nil
+	return slog.New(h)
 }
