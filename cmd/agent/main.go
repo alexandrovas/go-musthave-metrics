@@ -18,13 +18,17 @@ func cmd() *cobra.Command {
 	var configFile string
 
 	cmd := &cobra.Command{
-		Use:   "musthave-metrics-agent",
-		Short: "musthave-metrics is metrics storage",
+		Use:         "musthave-metrics-agent",
+		Short:       "musthave-metrics is metrics storage",
+		Version:     cmdHelper.BuildVersion(),
+		Annotations: cmdHelper.CobraAnnotations(),
 
 		// Отключаем стандартный вывод usage при ошибках, используем свой, который подключается с
 		// помощью SetFlagErrorFunc ниже.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Выводим build-информацию до загрузки конфигурации и запуска агента.
+			cmdHelper.PrintBuildInfo(cmd.OutOrStderr())
 			cfg, err := config.LoadAgentConfig(configFile, cmd.Flags())
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
@@ -38,7 +42,7 @@ func cmd() *cobra.Command {
 			return nil
 		},
 	}
-
+	cmd.SetVersionTemplate(cmdHelper.CobraVersionTemplate)
 	// usage показываем только при ошибке разбора флагов: cobra вызывает
 	// FlagErrorFunc исключительно для ошибок парсинга флагов, поэтому при ошибке
 	// RunE usage не выводится.
