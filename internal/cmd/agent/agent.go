@@ -19,6 +19,7 @@ import (
 	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/pool"
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 )
@@ -55,6 +56,8 @@ type Agent struct {
 	jobs           chan job
 	logger         *slog.Logger
 	retryIntervals []time.Duration
+	buffersPool    *pool.Pool[*bytes.Buffer] // переиспользуемые буферы JSON и gzip
+	buffersOnce    sync.Once                 // синхронизирует ленивую инициализацию пула
 }
 
 // New создаёт агента с коллекторами runtime- и системных метрик.
@@ -72,6 +75,16 @@ func New(cfg *config.AgentConfig, logger *slog.Logger) *Agent {
 		logger:         logger,
 		retryIntervals: retry.Intervals,
 	}
+}
+
+// buffers возвращает общий для агента пул JSON- и gzip-буферов.
+// Инициализация через sync.Once также поддерживает агентов, созданных в тестах
+// без конструктора New.
+func (a *Agent) buffers() *pool.Pool[*bytes.Buffer] {
+	a.buffersOnce.Do(func() {
+		a.buffersPool = pool.New(func() *bytes.Buffer { return &bytes.Buffer{} })
+	})
+	return a.buffersPool
 }
 
 // Run запускает циклы опроса метрик и их отправки на сервер до получения
@@ -223,8 +236,12 @@ func (a *Agent) report(ctx context.Context) {
 }
 
 func (a *Agent) sendMetricsBatch(ctx context.Context, metrics []models.Metrics) error {
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(metrics); err != nil {
+	buffers := a.buffers()
+	buf := buffers.Get()
+	// Буфер нельзя вернуть, пока sendData использует его данные для сжатия.
+	defer buffers.Put(buf)
+
+	if err := json.NewEncoder(buf).Encode(metrics); err != nil {
 		return fmt.Errorf("json encode error: %w", err)
 	}
 	url := fmt.Sprintf("http://%s/updates", a.cfg.ServerAddress)
@@ -234,8 +251,12 @@ func (a *Agent) sendMetricsBatch(ctx context.Context, metrics []models.Metrics) 
 const hashHeader = "HashSHA256"
 
 func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
-	var compressed bytes.Buffer
-	gw := gzip.NewWriter(&compressed)
+	buffers := a.buffers()
+	compressed := buffers.Get()
+	// Тело запроса ссылается на этот буфер, в том числе при повторных попытках.
+	defer buffers.Put(compressed)
+
+	gw := gzip.NewWriter(compressed)
 	if _, err := gw.Write(data); err != nil {
 		return fmt.Errorf("gzip write error: %w", err)
 	}
