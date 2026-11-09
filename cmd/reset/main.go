@@ -30,7 +30,7 @@ func main() {
 // execute завершает процесс с ненулевым кодом, если генерация не удалась.
 // os.Exit вынесен в хелпер, потому что staticlint запрещает его в main.
 func execute() {
-	if err := reset.Run(os.Args[1:]...); err != nil {
+	if err := reset.Run(slog.Default(), os.Args[1:]...); err != nil {
 		slog.Error("reset generation failed", "error", err)
 		os.Exit(1)
 	}

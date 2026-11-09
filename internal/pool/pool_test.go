@@ -36,7 +36,8 @@ func TestGetCreatesValueWhenPoolContainsUnexpectedType(t *testing.T) {
 		created++
 		return &testValue{value: 42}
 	})
-	p.pool.Put("unexpected type")
+	type unexpectedValue struct{}
+	p.pool.Put(&unexpectedValue{})
 
 	got := p.Get()
 	require.NotNil(t, got)

@@ -100,22 +100,34 @@ type fileData struct {
 
 // Run загружает пакеты по паттернам (по умолчанию "./...") относительно
 // текущей директории, находит структуры с директивой // generate:reset и
-// генерирует для каждого пакета reset.gen.go.
+// генерирует для каждого пакета reset.gen.go. Если logger равен nil,
+// используется slog.Default().
 //
 // Аргументами могут быть паттерны ("./..."), пути к каталогам ("internal")
 // и пути к .go-файлам ("internal/config/config.go").
-func Run(patterns ...string) error {
-	return run("", patterns)
+func Run(logger *slog.Logger, patterns ...string) error {
+	return newGenerator(logger).run("", patterns)
+}
+
+type generator struct {
+	logger *slog.Logger
+}
+
+func newGenerator(logger *slog.Logger) *generator {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &generator{logger: logger}
 }
 
 // run — основная логика генерации; dir задаёт рабочую директорию загрузки
 // пакетов (пустая строка — текущая директория).
-func run(dir string, patterns []string) error {
+func (g *generator) run(dir string, patterns []string) error {
 	patterns = normalizePatterns(dir, patterns)
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
-	slog.Info("scanning packages for // "+ResetDirective+" structs", "patterns", strings.Join(patterns, " "))
+	g.logger.Info("scanning packages for // "+ResetDirective+" structs", "patterns", strings.Join(patterns, " "))
 
 	// Сначала загружаем только синтаксис: полная проверка типов может завершиться
 	// ошибкой, если исходники уже вызывают Reset(), а сгенерированного файла ещё
@@ -143,20 +155,20 @@ func run(dir string, patterns []string) error {
 	if len(pkgs) == 0 || allPackagesFailed(pkgs) {
 		return fmt.Errorf("no packages loaded for patterns %s", strings.Join(patterns, " "))
 	}
-	slog.Debug("packages loaded", "count", len(pkgs))
+	g.logger.Debug("packages loaded", "count", len(pkgs))
 
 	marked, byPkg := markStructs(pkgs)
 
 	// Молчаливый прогон без результатов неотличим от «генератор не запустился»,
 	// поэтому случай «помеченных структур нет» логируем отдельно.
 	if len(byPkg) == 0 {
-		slog.Warn("no structs marked with // " + ResetDirective + " found")
+		g.logger.Warn("no structs marked with // " + ResetDirective + " found")
 		return nil
 	}
-	slog.Debug("marked structs found", "count", len(marked), "packages", len(byPkg))
+	g.logger.Debug("marked structs found", "count", len(marked), "packages", len(byPkg))
 
 	for pkg, namedList := range byPkg {
-		if err := generatePackage(pkg, namedList, marked); err != nil {
+		if err := g.generatePackage(pkg, namedList, marked); err != nil {
 			return err
 		}
 	}
@@ -379,7 +391,7 @@ func markedStruct(pkg *packages.Package, decl *ast.GenDecl, spec ast.Spec) (*typ
 // generatePackage генерирует reset.gen.go для одного пакета: сортирует помеченные
 // структуры по имени, рендерит файл единым шаблоном и записывает его, если
 // содержимое изменилось.
-func generatePackage(pkg *packages.Package, namedList []*types.Named, marked map[*types.TypeName]bool) error {
+func (g *generator) generatePackage(pkg *packages.Package, namedList []*types.Named, marked map[*types.TypeName]bool) error {
 	sort.Slice(namedList, func(i, j int) bool {
 		return namedList[i].Obj().Name() < namedList[j].Obj().Name()
 	})
@@ -404,9 +416,9 @@ func generatePackage(pkg *packages.Package, namedList []*types.Named, marked map
 		return fmt.Errorf("write %s: %w", out, err)
 	}
 	if changed {
-		slog.Info("generated reset.gen.go", "path", out, "structs", len(namedList))
+		g.logger.Info("generated reset.gen.go", "path", out, "structs", len(namedList))
 	} else {
-		slog.Debug("reset.gen.go is up to date", "path", out)
+		g.logger.Debug("reset.gen.go is up to date", "path", out)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -15,6 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/go/packages"
 )
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // --- вспомогательные конструкторы синтетических типов go/types ---
 
@@ -481,7 +486,7 @@ func (s *S) Reset() {
 func TestRun(t *testing.T) {
 	dir, pattern := writeTestModule(t)
 
-	require.NoError(t, run(dir, []string{pattern}))
+	require.NoError(t, newGenerator(discardLogger()).run(dir, []string{pattern}))
 
 	out := filepath.Join(dir, "sample", "reset.gen.go")
 	got, err := os.ReadFile(out)
@@ -489,7 +494,7 @@ func TestRun(t *testing.T) {
 	assert.Equal(t, testModuleGolden, string(got))
 
 	// Повторный запуск не меняет файл.
-	require.NoError(t, run(dir, []string{pattern}))
+	require.NoError(t, newGenerator(discardLogger()).run(dir, []string{pattern}))
 	got2, err := os.ReadFile(out)
 	require.NoError(t, err)
 	assert.Equal(t, testModuleGolden, string(got2))
@@ -502,7 +507,7 @@ func TestRun_GeneratedCodeCompiles(t *testing.T) {
 
 	dir, pattern := writeTestModule(t)
 
-	require.NoError(t, run(dir, []string{pattern}))
+	require.NoError(t, newGenerator(discardLogger()).run(dir, []string{pattern}))
 
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = dir
@@ -522,7 +527,7 @@ func TestRun_WriteError(t *testing.T) {
 	require.NoError(t, os.Chmod(sampleDir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(sampleDir, 0o755) })
 
-	err := run(dir, []string{pattern})
+	err := newGenerator(discardLogger()).run(dir, []string{pattern})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write")
 }
@@ -532,7 +537,7 @@ func TestRun_FileAndDirectoryArguments(t *testing.T) {
 	out := filepath.Join(dir, "sample", "reset.gen.go")
 
 	t.Run("single .go file", func(t *testing.T) {
-		require.NoError(t, run(dir, []string{"sample/sample.go"}))
+		require.NoError(t, newGenerator(discardLogger()).run(dir, []string{"sample/sample.go"}))
 		got, err := os.ReadFile(out)
 		require.NoError(t, err)
 		assert.Equal(t, testModuleGolden, string(got))
@@ -540,7 +545,7 @@ func TestRun_FileAndDirectoryArguments(t *testing.T) {
 	})
 
 	t.Run("bare directory", func(t *testing.T) {
-		require.NoError(t, run(dir, []string{"sample"}))
+		require.NoError(t, newGenerator(discardLogger()).run(dir, []string{"sample"}))
 		got, err := os.ReadFile(out)
 		require.NoError(t, err)
 		assert.Equal(t, testModuleGolden, string(got))
@@ -549,7 +554,7 @@ func TestRun_FileAndDirectoryArguments(t *testing.T) {
 
 func TestRun_OutsideModule(t *testing.T) {
 	// Каталог без go.mod — ни один пакет не загрузится, это ошибка запуска.
-	err := run(t.TempDir(), nil)
+	err := newGenerator(nil).run(t.TempDir(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no packages loaded")
 }
@@ -564,10 +569,7 @@ func TestRun_NoMarkedStructs(t *testing.T) {
 		"package plain\n\ntype S struct {\n\ti int\n}\n"), 0o644))
 
 	var buf bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	require.NoError(t, run(dir, []string{"./..."}))
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	require.NoError(t, newGenerator(logger).run(dir, []string{"./..."}))
 	assert.Contains(t, buf.String(), "no structs marked with // "+ResetDirective+" found")
 }
