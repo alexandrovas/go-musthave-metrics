@@ -12,7 +12,8 @@ type Resettable interface {
 
 // Pool хранит объекты одного типа и сбрасывает состояние перед возвратом в пул.
 type Pool[T Resettable] struct {
-	pool sync.Pool
+	pool    sync.Pool
+	newFunc func() T
 }
 
 // New создаёт пул. newFunc вызывается, если Get не находит объект в пуле.
@@ -22,6 +23,7 @@ func New[T Resettable](newFunc func() T) *Pool[T] {
 	}
 
 	return &Pool[T]{
+		newFunc: newFunc,
 		pool: sync.Pool{
 			New: func() any {
 				return newFunc()
@@ -32,7 +34,11 @@ func New[T Resettable](newFunc func() T) *Pool[T] {
 
 // Get возвращает объект из пула или создаёт новый с помощью конструктора.
 func (p *Pool[T]) Get() T {
-	return p.pool.Get().(T)
+	value, ok := p.pool.Get().(T)
+	if !ok {
+		return p.newFunc()
+	}
+	return value
 }
 
 // Put сбрасывает состояние объекта и возвращает его в пул для повторного

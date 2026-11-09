@@ -30,6 +30,20 @@ func TestGetCreatesValueWhenPoolIsEmpty(t *testing.T) {
 	assert.Equal(t, 1, created)
 }
 
+func TestGetCreatesValueWhenPoolContainsUnexpectedType(t *testing.T) {
+	created := 0
+	p := New(func() *testValue {
+		created++
+		return &testValue{value: 42}
+	})
+	p.pool.Put("unexpected type")
+
+	got := p.Get()
+	require.NotNil(t, got)
+	assert.Equal(t, 42, got.value)
+	assert.Equal(t, 1, created)
+}
+
 func TestPutResetsValueBeforeReturningItToPool(t *testing.T) {
 	p := New(func() *testValue { return &testValue{} })
 	value := p.Get()
