@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -37,7 +36,7 @@ func cmd() *cobra.Command {
 			a := agent.New(cfg, logger)
 			if err := a.Run(); err != nil {
 				logger.Error("agent process terminated abnormally", "error", err)
-				return errors.New("agent process terminated abnormally")
+				return fmt.Errorf("agent process terminated abnormally: %w", err)
 			}
 			return nil
 		},

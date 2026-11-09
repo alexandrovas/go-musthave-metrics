@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -38,7 +37,7 @@ func cmd() *cobra.Command {
 			s := server.New(cfg, logger)
 			if err := s.Run(); err != nil {
 				logger.Error("server process terminated abnormally", "error", err)
-				return errors.New("server process terminated abnormally")
+				return fmt.Errorf("server process terminated abnormally: %w", err)
 			}
 			return nil
 		},
