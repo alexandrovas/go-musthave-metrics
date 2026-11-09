@@ -27,7 +27,7 @@ func cmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Выводим build-информацию до загрузки конфигурации и запуска агента.
-			cmdHelper.PrintBuildInfo(cmd.OutOrStderr())
+			cmdHelper.PrintBuildInfo(os.Stdout)
 			cfg, err := config.LoadAgentConfig(configFile, cmd.Flags())
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
