@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -173,7 +174,7 @@ func TestLoadServerConfig_FromFlags(t *testing.T) {
 	assert.True(t, cfg.RestoreState)
 	assert.Equal(t, "postgres://flag", cfg.DatabaseDSN)
 	assert.Equal(t, "flag-key", cfg.Key)
-	assert.Equal(t, "warn", cfg.Log.Level)
+	assert.Equal(t, slog.LevelWarn, cfg.Log.Level)
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
 	assert.Equal(t, 8, cfg.AuditWorkers)
 	assert.Equal(t, 128, cfg.AuditQueueSize)
@@ -209,7 +210,7 @@ log:
 	assert.Equal(t, "http://audit.example.com", cfg.AuditURL)
 	assert.Equal(t, 2, cfg.AuditWorkers)
 	assert.Equal(t, 16, cfg.AuditQueueSize)
-	assert.Equal(t, "debug", cfg.Log.Level)
+	assert.Equal(t, slog.LevelDebug, cfg.Log.Level)
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
 }
 
@@ -250,7 +251,7 @@ func TestLoadAgentConfig_FromFlags(t *testing.T) {
 	assert.Equal(t, 15*time.Second, cfg.ReportInterval)
 	assert.Equal(t, uint16(7), cfg.RateLimit)
 	assert.Equal(t, "agent-key", cfg.Key)
-	assert.Equal(t, "error", cfg.Log.Level)
+	assert.Equal(t, slog.LevelError, cfg.Log.Level)
 	assert.Equal(t, TextLogFormat, cfg.Log.Format)
 }
 
@@ -292,4 +293,52 @@ func TestLoadAgentConfig_Validation(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+func TestLogFormatDecodeHook(t *testing.T) {
+	formatType := reflect.TypeFor[LogFormat]()
+	strType := reflect.TypeFor[string]()
+
+	tests := []struct {
+		name    string
+		from    reflect.Type
+		to      reflect.Type
+		data    any
+		want    any
+		wantErr bool
+	}{
+		{"text", strType, formatType, "text", TextLogFormat, false},
+		{"json", strType, formatType, "json", JSONLogFormat, false},
+		{"invalid returns error", strType, formatType, "yaml", "yaml", true},
+		{"non-string source passes through", reflect.TypeFor[int](), formatType, 5, 5, false},
+		{"non-format target passes through", strType, strType, "text", "text", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := logFormatDecodeHook(tt.from, tt.to, tt.data)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLoadServerConfig_InvalidLogFormat(t *testing.T) {
+	path := writeConfigFile(t, "log:\n  level: \"info\"\n  format: \"yaml\"\n")
+
+	_, err := LoadServerConfig(path, pflag.NewFlagSet("empty", pflag.ContinueOnError))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid log format")
+}
+
+func TestLoadServerConfig_InvalidLogLevel(t *testing.T) {
+	path := writeConfigFile(t, "log:\n  level: \"bogus\"\n  format: \"text\"\n")
+
+	_, err := LoadServerConfig(path, pflag.NewFlagSet("empty", pflag.ContinueOnError))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid log level")
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"reflect"
 	"strings"
@@ -27,10 +28,30 @@ const (
 	TextLogFormat LogFormat = "text"
 )
 
+// ParseLogFormat валидирует строку и возвращает формат логирования.
+func ParseLogFormat(s string) (LogFormat, error) {
+	f := LogFormat(s)
+	switch f {
+	case TextLogFormat, JSONLogFormat:
+		return f, nil
+	default:
+		return "", fmt.Errorf("invalid log format %q: expected one of %q", s, []LogFormat{TextLogFormat, JSONLogFormat})
+	}
+}
+
+// ParseLogLevel валидирует строку и возвращает уровень логирования.
+func ParseLogLevel(s string) (slog.Level, error) {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(s)); err != nil {
+		return 0, fmt.Errorf("invalid log level %q: expected one of %q", s, []string{"debug", "info", "warn", "error"})
+	}
+	return l, nil
+}
+
 // LogConfig — настройки логирования (уровень и формат).
 type LogConfig struct {
-	Level  string    `koanf:"level"`
-	Format LogFormat `koanf:"format"`
+	Level  slog.Level `koanf:"level"`
+	Format LogFormat  `koanf:"format"`
 }
 
 // ServerConfig — конфигурация сервера.
@@ -60,7 +81,7 @@ type AgentConfig struct {
 
 // durationDecodeHook учит mapstructure понимать голые числа как секунды.
 func durationDecodeHook(from reflect.Type, to reflect.Type, data any) (any, error) {
-	if from.Kind() != reflect.String || to != reflect.TypeOf(time.Duration(0)) {
+	if from.Kind() != reflect.String || to != reflect.TypeFor[time.Duration]() {
 		return data, nil
 	}
 	d, err := ParseDuration(data.(string))
@@ -68,6 +89,32 @@ func durationDecodeHook(from reflect.Type, to reflect.Type, data any) (any, erro
 		return data, err
 	}
 	return d, nil
+}
+
+// slogLevelDecodeHook валидирует уровень логирования, приходящий строкой из
+// файла, переменных окружения или флагов.
+func slogLevelDecodeHook(from reflect.Type, to reflect.Type, data any) (any, error) {
+	if from.Kind() != reflect.String || to != reflect.TypeFor[slog.Level]() {
+		return data, nil
+	}
+	l, err := ParseLogLevel(data.(string))
+	if err != nil {
+		return data, err
+	}
+	return l, nil
+}
+
+// logFormatDecodeHook валидирует формат логирования (text/json), приходящий
+// строкой из файла, переменных окружения или флагов.
+func logFormatDecodeHook(from reflect.Type, to reflect.Type, data any) (any, error) {
+	if from.Kind() != reflect.String || to != reflect.TypeFor[LogFormat]() {
+		return data, nil
+	}
+	f, err := ParseLogFormat(data.(string))
+	if err != nil {
+		return data, err
+	}
+	return f, nil
 }
 
 // stringToBoolHook учит mapstructure преобразовывать строки "true"/"false" в bool.
@@ -119,6 +166,8 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 		DecoderConfig: &mapstructure.DecoderConfig{
 			DecodeHook: mapstructure.ComposeDecodeHookFunc(
 				durationDecodeHook,
+				slogLevelDecodeHook,
+				logFormatDecodeHook,
 				mapstructure.StringToTimeDurationHookFunc(),
 				stringToBoolHook,
 				mapstructure.StringToUint16HookFunc(),

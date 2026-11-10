@@ -16,6 +16,7 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
+	"github.com/alexandrovas/go-musthave-metrics/internal/pool"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
 )
 
@@ -24,6 +25,9 @@ type Handler struct {
 	service MetricsService
 	logger  *slog.Logger
 	auditor *audit.Dispatcher
+
+	// metricsPageBuffers переиспользует буферы при рендеринге HTML-страницы метрик.
+	metricsPageBuffers *pool.Pool[*bytes.Buffer]
 }
 
 // NewHandler создаёт обработчики эндпоинтов поверх сервиса метрик s. События
@@ -33,6 +37,9 @@ func NewHandler(s MetricsService, logger *slog.Logger, auditor *audit.Dispatcher
 		service: s,
 		logger:  logger,
 		auditor: auditor,
+		metricsPageBuffers: pool.New(func() *bytes.Buffer {
+			return &bytes.Buffer{}
+		}),
 	}
 }
 
@@ -291,8 +298,11 @@ func (h *Handler) ListMetrics(w http.ResponseWriter, r *http.Request) {
 		rows[i] = metricRow{ID: m.ID, MType: m.MType, Value: formatValue(m)}
 	}
 
-	var buf bytes.Buffer
-	if err := metricsPageTmpl.Execute(&buf, rows); err != nil {
+	// берем буффер из пула и возвращаем его после возвращения HTTP-ответа
+	buf := h.metricsPageBuffers.Get()
+	defer h.metricsPageBuffers.Put(buf)
+
+	if err := metricsPageTmpl.Execute(buf, rows); err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
