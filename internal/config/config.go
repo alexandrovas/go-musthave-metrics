@@ -63,6 +63,7 @@ type ServerConfig struct {
 	RestoreState    bool          `koanf:"restore"`
 	DatabaseDSN     string        `koanf:"database-dsn"`
 	Key             string        `koanf:"key"`
+	CryptoKey       string        `koanf:"crypto-key"`
 	AuditFile       string        `koanf:"audit-file"`
 	AuditURL        string        `koanf:"audit-url"`
 	AuditWorkers    int           `koanf:"audit-workers"`
@@ -77,6 +78,7 @@ type AgentConfig struct {
 	RateLimit      uint16        `koanf:"rate-limit"`
 	Log            LogConfig     `koanf:"log"`
 	Key            string        `koanf:"key"`
+	CryptoKey      string        `koanf:"crypto-key"`
 }
 
 // durationDecodeHook учит mapstructure понимать голые числа как секунды.

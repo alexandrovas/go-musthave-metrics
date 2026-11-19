@@ -1,8 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"compress/gzip"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +28,7 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 )
@@ -420,4 +428,43 @@ func TestSendMetricsBatchOmitsHashHeaderWhenNoKey(t *testing.T) {
 
 	assert.False(t, sawHeader, "no key configured — request must not carry a hash header")
 	assert.Empty(t, gotHash)
+}
+
+func TestSendMetricsBatchEncryptsWhenCryptoKeyConfigured(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	require.NoError(t, err)
+	publicKeyPath := filepath.Join(t.TempDir(), "public.pem")
+	require.NoError(t, os.WriteFile(publicKeyPath, pem.EncodeToMemory(&pem.Block{
+		Type: "PUBLIC KEY", Bytes: publicDER,
+	}), 0o600))
+
+	var got []models.Metrics
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		require.NoError(t, readErr)
+		body, readErr = crypto.Decrypt(privateKey, body)
+		require.NoError(t, readErr)
+		zr, gzipErr := gzip.NewReader(bytes.NewReader(body))
+		require.NoError(t, gzipErr)
+		defer zr.Close()
+		body, readErr = io.ReadAll(zr)
+		require.NoError(t, readErr)
+		require.NoError(t, json.Unmarshal(body, &got))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := &Agent{
+		cfg:        &config.AgentConfig{ServerAddress: host, CryptoKey: publicKeyPath},
+		httpClient: srv.Client(),
+		logger:     testLogger,
+	}
+	// В тесте отправка вызывается напрямую, без Run(), который загружает ключ при старте.
+	require.NoError(t, a.loadCryptoKey())
+	want := []models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}}
+	require.NoError(t, a.sendMetricsBatch(t.Context(), want))
+	require.Equal(t, want, got)
 }

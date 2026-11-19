@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/pool"
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
@@ -58,6 +60,7 @@ type Agent struct {
 	retryIntervals []time.Duration
 	buffersPool    *pool.Pool[*bytes.Buffer] // переиспользуемые буферы JSON и gzip
 	buffersOnce    sync.Once                 // синхронизирует ленивую инициализацию пула
+	cryptoKey      *rsa.PublicKey
 }
 
 // New создаёт агента с коллекторами runtime- и системных метрик.
@@ -90,6 +93,10 @@ func (a *Agent) buffers() *pool.Pool[*bytes.Buffer] {
 // Run запускает циклы опроса метрик и их отправки на сервер до получения
 // сигнала прерывания.
 func (a *Agent) Run() error {
+	if err := a.loadCryptoKey(); err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 
 	a.logger.Info("Agent is running", "server", a.cfg.ServerAddress, "rate_limit", a.cfg.RateLimit)
@@ -121,6 +128,18 @@ func (a *Agent) Run() error {
 
 	wg.Wait()
 	a.logger.Info("Agent stopped")
+	return nil
+}
+
+func (a *Agent) loadCryptoKey() error {
+	if a.cfg.CryptoKey == "" {
+		return nil
+	}
+	key, err := crypto.LoadPublicKey(a.cfg.CryptoKey)
+	if err != nil {
+		return err
+	}
+	a.cryptoKey = key
 	return nil
 }
 
@@ -264,6 +283,13 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 		return fmt.Errorf("gzip close error: %w", err)
 	}
 	body := compressed.Bytes()
+	if a.cryptoKey != nil {
+		var err error
+		body, err = crypto.Encrypt(a.cryptoKey, body)
+		if err != nil {
+			return fmt.Errorf("encrypt request body: %w", err)
+		}
+	}
 
 	// Хеш считается от исходных (несжатых) данных — именно их сервер увидит
 	// после декомпрессии тела запроса.

@@ -59,6 +59,7 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().BoolP("restore", "r", false, "restore previosly saved state")
 	cmd.PersistentFlags().StringP("database-dsn", "d", "", "postgres database dsn")
 	cmd.PersistentFlags().StringP("key", "k", "", "key for request/response signing")
+	cmd.PersistentFlags().String("crypto-key", "", "path to RSA private key for decrypting requests")
 	cmd.PersistentFlags().VarP(cmdHelper.NewLogLevelValue(slog.LevelInfo), "log.level", "", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().VarP(cmdHelper.NewLogFormatValue(config.TextLogFormat), "log.format", "", "log format (text, json)")
 	cmd.PersistentFlags().StringP("audit-file", "", "", "path to audit log file (audit disabled if empty)")

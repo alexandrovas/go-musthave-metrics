@@ -2,7 +2,10 @@ package handler
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -16,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	models "github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 )
@@ -25,9 +29,38 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	repo := repository.NewMemStorage(testLogger)
-	srv := httptest.NewServer(NewRouter(repo, testLogger, "", nil))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, nil))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func TestRouterDecryptsEncryptedUpdates(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	_, err = zw.Write([]byte(`[{"id":"PollCount","type":"counter","delta":5}]`))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	ciphertext, err := crypto.Encrypt(&privateKey.PublicKey, compressed.Bytes())
+	require.NoError(t, err)
+
+	repo := repository.NewMemStorage(testLogger)
+	srv := httptest.NewServer(NewRouter(repo, testLogger, nil, WithCryptoKey(privateKey)))
+	t.Cleanup(srv.Close)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/updates", bytes.NewReader(ciphertext))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	status, value := request(t, srv, http.MethodGet, "/value/counter/PollCount")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "5", value)
 }
 
 func request(t *testing.T, srv *httptest.Server, method, path string) (int, string) {
@@ -175,7 +208,7 @@ func TestListMetricsEscapesHTML(t *testing.T) {
 	repo := repository.NewMemStorage(testLogger)
 	require.NoError(t, repo.SetGauge(t.Context(), `<script>alert(1)</script>`, 42))
 
-	srv := httptest.NewServer(NewRouter(repo, testLogger, "", nil))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, nil))
 	defer srv.Close()
 
 	_, body := request(t, srv, http.MethodGet, "/")
@@ -199,7 +232,7 @@ func TestUpdateMetricNotifiesAuditor(t *testing.T) {
 	obs := &chanObserver{events: make(chan audit.Event, 1)}
 	repo := repository.NewMemStorage(testLogger)
 	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
-	srv := httptest.NewServer(NewRouter(repo, testLogger, "", auditor))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, auditor))
 	t.Cleanup(func() {
 		srv.Close()
 		_ = auditor.Close(context.Background())
@@ -222,7 +255,7 @@ func TestBatchUpdateNotifiesAuditorWithAllMetricNames(t *testing.T) {
 	obs := &chanObserver{events: make(chan audit.Event, 1)}
 	repo := repository.NewMemStorage(testLogger)
 	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
-	srv := httptest.NewServer(NewRouter(repo, testLogger, "", auditor))
+	srv := httptest.NewServer(NewRouter(repo, testLogger, auditor))
 	t.Cleanup(func() {
 		srv.Close()
 		_ = auditor.Close(context.Background())

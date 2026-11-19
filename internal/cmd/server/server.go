@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	handlerHttp "github.com/alexandrovas/go-musthave-metrics/internal/handler/http"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
@@ -53,6 +55,14 @@ func (s *Server) auditObservers() []audit.Observer {
 // Run запускает сервер: инициализирует хранилище, настраивает роутер и слушает
 // адрес из конфигурации до получения сигнала прерывания.
 func (s *Server) Run() error {
+	var cryptoKey *rsa.PrivateKey
+	if s.cfg.CryptoKey != "" {
+		var err error
+		cryptoKey, err = crypto.LoadPrivateKey(s.cfg.CryptoKey)
+		if err != nil {
+			return fmt.Errorf("load decryption key: %w", err)
+		}
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -97,8 +107,11 @@ func (s *Server) Run() error {
 		s.cfg.AuditQueueSize, s.auditObservers()...)
 
 	srv := &http.Server{
-		Addr:    s.cfg.Address,
-		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key, auditor),
+		Addr: s.cfg.Address,
+		Handler: handlerHttp.NewRouter(repo, s.logger, auditor,
+			handlerHttp.WithHashKey(s.cfg.Key),
+			handlerHttp.WithCryptoKey(cryptoKey),
+		),
 	}
 
 	wg.Go(func() {

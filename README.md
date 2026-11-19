@@ -130,3 +130,22 @@ Dropped 25 nodes (cum <= 24.82MB)
 
 > `pprof` доступен как `go tool pprof` (идёт в комплекте с Go) либо
 > устанавливается отдельно: `go install github.com/google/pprof@latest`.
+
+## Шифрование трафика агента
+
+Агент может шифровать отправляемые на сервер запросы. Создайте пару RSA-ключей
+в PEM-формате, передайте агенту публичный, а серверу соответствующий приватный:
+
+```bash
+openssl genrsa -out private.pem 2048
+openssl rsa -in private.pem -pubout -out public.pem
+```
+
+```bash
+./musthave-metrics-server -crypto-key private.pem
+./musthave-metrics-agent -crypto-key public.pem
+```
+
+Вместо флага `-crypto-key` можно задать переменную окружения `CRYPTO_KEY`.
+Агент использует RSA-OAEP для защиты случайного AES-ключа, а данные шифрует
+AES-GCM; таким образом поддерживаются пакеты любого размера.
