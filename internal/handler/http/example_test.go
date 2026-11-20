@@ -16,7 +16,7 @@ import (
 // чтобы примеры не засоряли stdout.
 func newTestRouter() http.Handler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return handler.NewRouter(repository.NewMemStorage(logger), logger, nil)
+	return handler.NewRouter(repository.NewMemStorage(logger, ""), logger, nil)
 }
 
 func Example_update() {

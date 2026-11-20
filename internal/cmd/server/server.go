@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
@@ -53,7 +53,8 @@ func (s *Server) auditObservers() []audit.Observer {
 }
 
 // Run запускает сервер: инициализирует хранилище, настраивает роутер и слушает
-// адрес из конфигурации до получения сигнала прерывания.
+// адрес из конфигурации до SIGTERM, SIGINT или SIGQUIT. При завершении дожидается
+// HTTP-обработчиков и сохраняет финальное состояние хранилища.
 func (s *Server) Run() error {
 	var cryptoKey *rsa.PrivateKey
 	if s.cfg.CryptoKey != "" {
@@ -64,20 +65,21 @@ func (s *Server) Run() error {
 		}
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(),
+		syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer cancel()
 
 	var wg sync.WaitGroup
 
 	var repo service.Repository
 	if s.cfg.DatabaseDSN == "" {
-		memStore := repository.NewMemStorage(s.logger)
+		memStore := repository.NewMemStorage(s.logger, s.cfg.FileStoragePath)
 
 		if s.cfg.FileStoragePath != "" {
 
 			// Восстановление состояния из файла при старте
 			if s.cfg.RestoreState {
-				if err := memStore.Load(s.cfg.FileStoragePath); err != nil {
+				if err := memStore.Load(); err != nil {
 					return fmt.Errorf("cannot restore state: %w", err)
 				}
 				s.logger.Info("state restored from file", "path", s.cfg.FileStoragePath)
@@ -85,10 +87,10 @@ func (s *Server) Run() error {
 
 			// Настройка сохранения: синхронное (интервал == 0) или периодическое
 			if s.cfg.StoreInterval == 0 {
-				memStore.EnableSyncSave(s.cfg.FileStoragePath)
+				memStore.EnableSyncSave()
 			} else {
 				wg.Go(func() {
-					memStore.RunPeriodicSave(ctx, s.cfg.FileStoragePath, s.cfg.StoreInterval)
+					memStore.RunPeriodicSave(ctx, s.cfg.StoreInterval)
 				})
 			}
 		}
@@ -126,6 +128,13 @@ func (s *Server) Run() error {
 	cancel()
 	wg.Wait()
 
+	// Сохраняем финальное состояние после завершения всех HTTP-обработчиков.
+	var saveErr error
+	if err := repo.Save(); err != nil {
+		saveErr = fmt.Errorf("save final state: %w", err)
+		s.logger.Error("final save failed", "error", err)
+	}
+
 	// К этому моменту сервер уже остановлен: Shutdown дождался завершения всех
 	// активных HTTP-обработчиков, значит все синхронные вызовы notifyAudit тоже
 	// завершились. Создаем отдельный контекст с таймаутом 10 сек, чтоб отправить все события
@@ -138,6 +147,9 @@ func (s *Server) Run() error {
 
 	if !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	if saveErr != nil {
+		return saveErr
 	}
 	return nil
 }

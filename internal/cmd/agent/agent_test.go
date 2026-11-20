@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -46,6 +47,31 @@ type fakeCollector struct {
 	mu       sync.Mutex
 	counters map[string]int64
 	gauges   map[string]float64
+}
+
+type oneShotCollector struct {
+	mu        sync.Mutex
+	collected bool
+}
+
+func (c *oneShotCollector) Poll() {}
+
+func (c *oneShotCollector) Collect() []collectors.PendingMetric {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.collected {
+		return nil
+	}
+	c.collected = true
+	delta := int64(1)
+	return []collectors.PendingMetric{{
+		Metric: models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta},
+		Restore: func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.collected = false
+		},
+	}}
 }
 
 func newFakeCollector(counters map[string]int64, gauges map[string]float64) *fakeCollector {
@@ -289,6 +315,57 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 
 	// отправка не удалась (500) — дельта должна вернуться в счётчик, а не потеряться
 	assert.Equal(t, int64(5), fc.counter("PollCount"))
+}
+
+func TestAgentRunDrainsActiveSendOnSIGTERM(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestFinished := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		time.Sleep(100 * time.Millisecond)
+		close(requestFinished)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := &Agent{
+		cfg: &config.AgentConfig{
+			ServerAddress:  host,
+			RateLimit:      1,
+			PollInterval:   time.Hour,
+			ReportInterval: 10 * time.Millisecond,
+		},
+		collectors:     []collector{&oneShotCollector{}},
+		httpClient:     srv.Client(),
+		jobs:           make(chan job, 1),
+		logger:         testLogger,
+		retryIntervals: nil,
+	}
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.Run() }()
+	select {
+	case <-requestStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not start sending metrics")
+	}
+
+	process, err := os.FindProcess(os.Getpid())
+	require.NoError(t, err)
+	require.NoError(t, process.Signal(syscall.SIGTERM))
+
+	select {
+	case err := <-runDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not stop after SIGTERM")
+	}
+	select {
+	case <-requestFinished:
+	default:
+		t.Fatal("agent stopped before the active request completed")
+	}
 }
 
 // --- retry tests ---

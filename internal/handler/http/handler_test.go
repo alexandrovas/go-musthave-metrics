@@ -28,7 +28,7 @@ var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	repo := repository.NewMemStorage(testLogger)
+	repo := repository.NewMemStorage(testLogger, "")
 	srv := httptest.NewServer(NewRouter(repo, testLogger, nil))
 	t.Cleanup(srv.Close)
 	return srv
@@ -46,7 +46,7 @@ func TestRouterDecryptsEncryptedUpdates(t *testing.T) {
 	ciphertext, err := crypto.Encrypt(&privateKey.PublicKey, compressed.Bytes())
 	require.NoError(t, err)
 
-	repo := repository.NewMemStorage(testLogger)
+	repo := repository.NewMemStorage(testLogger, "")
 	srv := httptest.NewServer(NewRouter(repo, testLogger, nil, WithCryptoKey(privateKey)))
 	t.Cleanup(srv.Close)
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/updates", bytes.NewReader(ciphertext))
@@ -205,7 +205,7 @@ func TestListMetrics(t *testing.T) {
 }
 
 func TestListMetricsEscapesHTML(t *testing.T) {
-	repo := repository.NewMemStorage(testLogger)
+	repo := repository.NewMemStorage(testLogger, "")
 	require.NoError(t, repo.SetGauge(t.Context(), `<script>alert(1)</script>`, 42))
 
 	srv := httptest.NewServer(NewRouter(repo, testLogger, nil))
@@ -230,7 +230,7 @@ func (o *chanObserver) Notify(_ context.Context, event audit.Event) error {
 
 func TestUpdateMetricNotifiesAuditor(t *testing.T) {
 	obs := &chanObserver{events: make(chan audit.Event, 1)}
-	repo := repository.NewMemStorage(testLogger)
+	repo := repository.NewMemStorage(testLogger, "")
 	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
 	srv := httptest.NewServer(NewRouter(repo, testLogger, auditor))
 	t.Cleanup(func() {
@@ -253,7 +253,7 @@ func TestUpdateMetricNotifiesAuditor(t *testing.T) {
 
 func TestBatchUpdateNotifiesAuditorWithAllMetricNames(t *testing.T) {
 	obs := &chanObserver{events: make(chan audit.Event, 1)}
-	repo := repository.NewMemStorage(testLogger)
+	repo := repository.NewMemStorage(testLogger, "")
 	auditor := audit.NewDispatcher(testLogger, 0, 0, obs)
 	srv := httptest.NewServer(NewRouter(repo, testLogger, auditor))
 	t.Cleanup(func() {
