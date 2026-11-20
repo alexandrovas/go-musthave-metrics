@@ -184,19 +184,19 @@ func TestLoadServerConfig_FromFlags(t *testing.T) {
 	assert.Equal(t, 128, cfg.AuditQueueSize)
 }
 
-func TestLoadServerConfig_FromFile(t *testing.T) {
+func TestLoadServerConfig_FromYAMLFile(t *testing.T) {
 	path := writeConfigFile(t, `
 address: "file-host:8080"
-store-interval: "30"
-file-storage-path: "/tmp/file-metrics.json"
+store_interval: "30"
+file_storage_path: "/tmp/file-metrics.json"
 restore: "true"
-database-dsn: "postgres://file"
+database_dsn: "postgres://file"
 key: "file-key"
-crypto-key: "/tmp/file-private.pem"
-audit-file: "/tmp/audit.log"
-audit-url: "http://audit.example.com"
-audit-workers: 2
-audit-queue-size: 16
+crypto_key: "/tmp/file-private.pem"
+audit_file: "/tmp/audit.log"
+audit_url: "http://audit.example.com"
+audit_workers: 2
+audit_queue_size: 16
 log:
   level: "debug"
   format: "json"
@@ -218,6 +218,28 @@ log:
 	assert.Equal(t, 16, cfg.AuditQueueSize)
 	assert.Equal(t, slog.LevelDebug, cfg.Log.Level)
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
+}
+
+func TestLoadServerConfig_FromJSONFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	content := `{
+		"address": "localhost:8080",
+		"restore": true,
+		"store_interval": "1s",
+		"file_storage_path": "/path/to/file.db",
+		"database_dsn": "",
+		"crypto_key": "/path/to/key.pem"
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadServerConfig(path, pflag.NewFlagSet("empty", pflag.ContinueOnError))
+	require.NoError(t, err)
+	assert.Equal(t, "localhost:8080", cfg.Address)
+	assert.True(t, cfg.RestoreState)
+	assert.Equal(t, 1*time.Second, cfg.StoreInterval)
+	assert.Equal(t, "/path/to/file.db", cfg.FileStoragePath)
+	assert.Equal(t, "", cfg.DatabaseDSN)
+	assert.Equal(t, "/path/to/key.pem", cfg.CryptoKey)
 }
 
 func TestLoadServerConfig_EnvOverridesFlag(t *testing.T) {
