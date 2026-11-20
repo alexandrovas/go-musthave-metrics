@@ -147,7 +147,14 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 	}
 
 	// load from CLI flags
-	if err := loadNormalizedKeys(k, posflag.Provider(flags, ".", k), nil); err != nil {
+	flagLookup := koanf.New(".")
+	for _, key := range k.Keys() {
+		flagKey := strings.ReplaceAll(key, "_", "-")
+		if err := flagLookup.Set(flagKey, k.Get(key)); err != nil {
+			return fmt.Errorf("prepare config key %s for flags: %w", flagKey, err)
+		}
+	}
+	if err := loadNormalizedKeys(k, posflag.Provider(flags, ".", flagLookup), nil); err != nil {
 		return fmt.Errorf("load config from flags: %w", err)
 	}
 

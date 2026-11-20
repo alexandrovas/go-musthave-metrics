@@ -25,6 +25,19 @@ func writeConfigFile(t *testing.T, content string) string {
 	return path
 }
 
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	oldValue, existed := os.LookupEnv(key)
+	require.NoError(t, os.Unsetenv(key))
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(key, oldValue)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
 func newServerFlagSet() *pflag.FlagSet {
 	fs := pflag.NewFlagSet("server", pflag.ContinueOnError)
 	fs.StringP("address", "a", "localhost:8080", "")
@@ -220,6 +233,40 @@ log:
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
 }
 
+func TestLoadServerConfig_FileValueIsNotOverriddenByUnsetFlag(t *testing.T) {
+	path := writeConfigFile(t, `store_interval: "45s"`)
+	flags := newServerFlagSet()
+
+	cfg, err := LoadServerConfig(path, flags)
+	require.NoError(t, err)
+	assert.Equal(t, 45*time.Second, cfg.StoreInterval)
+
+	require.NoError(t, flags.Set("store-interval", "90s"))
+	cfg, err = LoadServerConfig(path, flags)
+	require.NoError(t, err)
+	assert.Equal(t, 90*time.Second, cfg.StoreInterval)
+}
+
+func TestLoadServerConfig_FileValueIsNotOverriddenByUnsetEnv(t *testing.T) {
+	unsetEnv(t, "STORE_INTERVAL")
+	path := writeConfigFile(t, `store_interval: "45s"`)
+
+	cfg, err := LoadServerConfig(path, newServerFlagSet())
+	require.NoError(t, err)
+	assert.Equal(t, 45*time.Second, cfg.StoreInterval)
+}
+
+func TestLoadServerConfig_EnvOverridesFileAndFlag(t *testing.T) {
+	path := writeConfigFile(t, `store_interval: "45s"`)
+	flags := newServerFlagSet()
+	require.NoError(t, flags.Set("store-interval", "60s"))
+	t.Setenv("STORE_INTERVAL", "90s")
+
+	cfg, err := LoadServerConfig(path, flags)
+	require.NoError(t, err)
+	assert.Equal(t, 90*time.Second, cfg.StoreInterval)
+}
+
 func TestLoadServerConfig_FromJSONFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	content := `{
@@ -232,7 +279,7 @@ func TestLoadServerConfig_FromJSONFile(t *testing.T) {
 	}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
-	cfg, err := LoadServerConfig(path, pflag.NewFlagSet("empty", pflag.ContinueOnError))
+	cfg, err := LoadServerConfig(path, newServerFlagSet())
 	require.NoError(t, err)
 	assert.Equal(t, "localhost:8080", cfg.Address)
 	assert.True(t, cfg.RestoreState)
