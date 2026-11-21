@@ -1,8 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"compress/gzip"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +15,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,6 +29,7 @@ import (
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 )
@@ -38,6 +47,31 @@ type fakeCollector struct {
 	mu       sync.Mutex
 	counters map[string]int64
 	gauges   map[string]float64
+}
+
+type oneShotCollector struct {
+	mu        sync.Mutex
+	collected bool
+}
+
+func (c *oneShotCollector) Poll() {}
+
+func (c *oneShotCollector) Collect() []collectors.PendingMetric {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.collected {
+		return nil
+	}
+	c.collected = true
+	delta := int64(1)
+	return []collectors.PendingMetric{{
+		Metric: models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta},
+		Restore: func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.collected = false
+		},
+	}}
 }
 
 func newFakeCollector(counters map[string]int64, gauges map[string]float64) *fakeCollector {
@@ -283,6 +317,57 @@ func TestAgentReportRestoresCounterOnFailedSend(t *testing.T) {
 	assert.Equal(t, int64(5), fc.counter("PollCount"))
 }
 
+func TestAgentRunDrainsActiveSendOnSIGTERM(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestFinished := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		time.Sleep(100 * time.Millisecond)
+		close(requestFinished)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := &Agent{
+		cfg: &config.AgentConfig{
+			ServerAddress:  host,
+			RateLimit:      1,
+			PollInterval:   time.Hour,
+			ReportInterval: 10 * time.Millisecond,
+		},
+		collectors:     []collector{&oneShotCollector{}},
+		httpClient:     srv.Client(),
+		jobs:           make(chan job, 1),
+		logger:         testLogger,
+		retryIntervals: nil,
+	}
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.Run() }()
+	select {
+	case <-requestStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not start sending metrics")
+	}
+
+	process, err := os.FindProcess(os.Getpid())
+	require.NoError(t, err)
+	require.NoError(t, process.Signal(syscall.SIGTERM))
+
+	select {
+	case err := <-runDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not stop after SIGTERM")
+	}
+	select {
+	case <-requestFinished:
+	default:
+		t.Fatal("agent stopped before the active request completed")
+	}
+}
+
 // --- retry tests ---
 
 func TestIsRetriableSendError(t *testing.T) {
@@ -420,4 +505,64 @@ func TestSendMetricsBatchOmitsHashHeaderWhenNoKey(t *testing.T) {
 
 	assert.False(t, sawHeader, "no key configured — request must not carry a hash header")
 	assert.Empty(t, gotHash)
+}
+
+func TestSendMetricsBatchEncryptsWhenCryptoKeyConfigured(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	publicDER, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	require.NoError(t, err)
+	publicKeyPath := filepath.Join(t.TempDir(), "public.pem")
+	require.NoError(t, os.WriteFile(publicKeyPath, pem.EncodeToMemory(&pem.Block{
+		Type: "PUBLIC KEY", Bytes: publicDER,
+	}), 0o600))
+
+	type handlerResult struct {
+		metrics []models.Metrics
+		err     error
+	}
+	results := make(chan handlerResult, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result := handlerResult{}
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			body, err = crypto.Decrypt(privateKey, body)
+		}
+		if err == nil {
+			var zr *gzip.Reader
+			zr, err = gzip.NewReader(bytes.NewReader(body))
+			if err == nil {
+				body, err = io.ReadAll(zr)
+				if closeErr := zr.Close(); err == nil {
+					err = closeErr
+				}
+			}
+		}
+		if err == nil {
+			err = json.Unmarshal(body, &result.metrics)
+		}
+		result.err = err
+		results <- result
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	a := &Agent{
+		cfg:        &config.AgentConfig{ServerAddress: host, CryptoKey: publicKeyPath},
+		httpClient: srv.Client(),
+		logger:     testLogger,
+	}
+	// В тесте отправка вызывается напрямую, без Run(), который загружает ключ при старте.
+	require.NoError(t, a.loadCryptoKey())
+	want := []models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}}
+	sendErr := a.sendMetricsBatch(t.Context(), want)
+	result := <-results
+	require.NoError(t, result.err)
+	require.NoError(t, sendErr)
+	require.Equal(t, want, result.metrics)
 }

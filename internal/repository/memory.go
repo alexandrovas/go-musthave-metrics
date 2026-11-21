@@ -22,24 +22,28 @@ type MemStorage struct {
 	counters map[string]int64
 	mu       sync.Mutex
 
-	syncPath string // если не пусто — синхронное сохранение после каждой мутации
-	logger   *slog.Logger
+	fileStoragePath string
+	syncSave        bool
+	logger          *slog.Logger
 }
 
 // NewMemStorage создаёт пустое in-memory хранилище.
-func NewMemStorage(logger *slog.Logger) *MemStorage {
+// logger используется для журналирования ошибок, fileStoragePath задаёт путь
+// для загрузки и сохранения состояния. Пустой путь отключает файловое хранение.
+func NewMemStorage(logger *slog.Logger, fileStoragePath string) *MemStorage {
 	return &MemStorage{
-		gauges:   make(map[string]float64),
-		counters: make(map[string]int64),
-		logger:   logger,
+		gauges:          make(map[string]float64),
+		counters:        make(map[string]int64),
+		fileStoragePath: fileStoragePath,
+		logger:          logger,
 	}
 }
 
-// EnableSyncSave включает синхронное сохранение на диск после каждого SetGauge/AddCounter.
-func (s *MemStorage) EnableSyncSave(path string) {
+// EnableSyncSave включает синхронное сохранение на диск после каждой мутации.
+func (s *MemStorage) EnableSyncSave() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.syncPath = path
+	s.syncSave = true
 }
 
 // UpdateBatch применяет пакет метрик: gauge перезаписывается, counter — увеличивается.
@@ -56,6 +60,12 @@ func (s *MemStorage) UpdateBatch(ctx context.Context, metrics []models.Metrics) 
 		}
 	}
 
+	if s.syncSave {
+		if err := s.saveLocked(); err != nil {
+			return fmt.Errorf("sync save after UpdateBatch: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -66,9 +76,9 @@ func (s *MemStorage) SetGauge(ctx context.Context, name string, value float64) e
 
 	s.gauges[name] = value
 
-	if s.syncPath != "" {
-		if err := s.saveLocked(s.syncPath); err != nil {
-			s.logger.Error("sync save after SetGauge", "error", err)
+	if s.syncSave {
+		if err := s.saveLocked(); err != nil {
+			return fmt.Errorf("sync save after SetGauge: %w", err)
 		}
 	}
 	return nil
@@ -90,9 +100,9 @@ func (s *MemStorage) AddCounter(ctx context.Context, name string, delta int64) e
 
 	s.counters[name] += delta
 
-	if s.syncPath != "" {
-		if err := s.saveLocked(s.syncPath); err != nil {
-			s.logger.Error("sync save after AddCounter", "error", err)
+	if s.syncSave {
+		if err := s.saveLocked(); err != nil {
+			return fmt.Errorf("sync save after AddCounter: %w", err)
 		}
 	}
 	return nil
@@ -127,16 +137,19 @@ func (s *MemStorage) Counters(ctx context.Context) (map[string]int64, error) {
 	return cp, nil
 }
 
-// Save сериализует все метрики в JSON-файл. Запись атомарная: сначала пишем
-// во временный файл, затем делаем rename.
-func (s *MemStorage) Save(path string) error {
+// Save сериализует все метрики в настроенный JSON-файл. Запись атомарная:
+// сначала пишем во временный файл, затем делаем rename.
+func (s *MemStorage) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.saveLocked(path)
+	if s.fileStoragePath == "" {
+		return nil
+	}
+	return s.saveLocked()
 }
 
 // saveLocked — внутренняя версия Save без захвата мьютекса.
-func (s *MemStorage) saveLocked(path string) error {
+func (s *MemStorage) saveLocked() error {
 	metrics := make([]models.Metrics, 0, len(s.gauges)+len(s.counters))
 	for name, v := range s.gauges {
 		metrics = append(metrics, models.Metrics{ID: name, MType: models.Gauge, Value: &v})
@@ -146,7 +159,7 @@ func (s *MemStorage) saveLocked(path string) error {
 	}
 
 	// пишем сначала во временный файл
-	tmpPath := path + ".tmp"
+	tmpPath := s.fileStoragePath + ".tmp"
 	f, err := os.Create(tmpPath)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
@@ -168,7 +181,7 @@ func (s *MemStorage) saveLocked(path string) error {
 	}
 
 	// атомарно переименовываем файл
-	return os.Rename(tmpPath, path)
+	return os.Rename(tmpPath, s.fileStoragePath)
 }
 
 // removeFile - удаляет файл по заданному пути. Если возникает ошибка,
@@ -179,10 +192,13 @@ func (s *MemStorage) removeFile(filename string) {
 	}
 }
 
-// Load загружает метрики из JSON-файла в хранилище.
+// Load загружает метрики из настроенного JSON-файла в хранилище.
 // Несуществующий файл ошибкой не считается.
-func (s *MemStorage) Load(path string) error {
-	f, err := os.Open(path)
+func (s *MemStorage) Load() error {
+	if s.fileStoragePath == "" {
+		return nil
+	}
+	f, err := os.Open(s.fileStoragePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -217,24 +233,27 @@ func (s *MemStorage) Load(path string) error {
 // RunPeriodicSave запускает цикл: с заданным интервалом сохраняет состояние на диск.
 // При отмене контекста выполняет финальное сохранение и выходит.
 // Вызывающая сторона должна обернуть вызов в горутину.
-func (s *MemStorage) RunPeriodicSave(ctx context.Context, path string, interval time.Duration) {
+func (s *MemStorage) RunPeriodicSave(ctx context.Context, interval time.Duration) {
+	if s.fileStoragePath == "" {
+		return
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	s.logger.Debug("running periodic save state to file", "path", path, "interval", interval)
+	s.logger.Debug("running periodic save state to file", "path", s.fileStoragePath, "interval", interval)
 	for {
 		select {
 		case <-ticker.C:
-			if err := s.Save(path); err != nil {
-				s.logger.Error("periodic save failed", "path", path, "error", err)
+			if err := s.Save(); err != nil {
+				s.logger.Error("periodic save failed", "path", s.fileStoragePath, "error", err)
 			} else {
-				s.logger.Debug("state saved", "path", path)
+				s.logger.Debug("state saved", "path", s.fileStoragePath)
 			}
 		case <-ctx.Done():
-			if err := s.Save(path); err != nil {
-				s.logger.Error("final save failed", "path", path, "error", err)
+			if err := s.Save(); err != nil {
+				s.logger.Error("final save failed", "path", s.fileStoragePath, "error", err)
 			}
-			s.logger.Debug("state saved", "path", path)
+			s.logger.Debug("state saved", "path", s.fileStoragePath)
 			return
 		}
 	}

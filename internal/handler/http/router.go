@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"crypto/rsa"
 	"log/slog"
 	"net/http"
 
@@ -25,23 +26,56 @@ type MetricsService interface {
 // Компиляционная проверка: *service.MetricsService реализует MetricsService.
 var _ MetricsService = (*service.MetricsService)(nil)
 
+type routerOptions struct {
+	hashKey   string
+	cryptoKey *rsa.PrivateKey
+}
+
+// Option задаёт дополнительную настройку HTTP-роутера.
+type Option func(*routerOptions)
+
+// WithHashKey включает проверку подписи входящих запросов и подпись ответов.
+func WithHashKey(key string) Option {
+	return func(options *routerOptions) {
+		options.hashKey = key
+	}
+}
+
+// WithCryptoKey задаёт закрытый RSA-ключ для расшифровки входящих запросов.
+func WithCryptoKey(key *rsa.PrivateKey) Option {
+	return func(options *routerOptions) {
+		options.cryptoKey = key
+	}
+}
+
 // NewRouter собирает chi-роутер со всеми эндпоинтами сервера метрик и
 // middleware (логирование, сжатие, опционально подпись и проверка хеша).
-func NewRouter(repo service.Repository, logger *slog.Logger, hashKey string, auditor *audit.Dispatcher) http.Handler {
+func NewRouter(repo service.Repository, logger *slog.Logger, auditor *audit.Dispatcher, opts ...Option) http.Handler {
+	options := routerOptions{}
+	for _, optFunc := range opts {
+		if optFunc != nil {
+			optFunc(&options)
+		}
+	}
+
 	svc := service.NewMetricsService(repo)
 	h := NewHandler(svc, logger, auditor)
 
 	r := chi.NewRouter()
 
+	// Расшифровка оборачивает сжатие: агент шифрует уже gzip-сжатое тело.
+	if options.cryptoKey != nil {
+		r.Use(middleware.DecryptBody(options.cryptoKey))
+	}
 	// Глобальные middlewares для всех запросов (логирование и сжатие ответов)
 	r.Use(middleware.Logger(logger), middleware.Compression)
 
 	// Если указан hashKey, то подписываем все исходящие ответы
 	// и проверяем входящие запросы, если в них есть подпись
-	if hashKey != "" {
+	if options.hashKey != "" {
 		r.Use(
-			middleware.SignResponse(hashKey),
-			middleware.ValidateSignature(hashKey),
+			middleware.SignResponse(options.hashKey),
+			middleware.ValidateSignature(options.hashKey),
 		)
 	}
 

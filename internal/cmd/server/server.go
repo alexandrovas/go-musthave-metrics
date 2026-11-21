@@ -2,16 +2,18 @@ package server
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/audit"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	handlerHttp "github.com/alexandrovas/go-musthave-metrics/internal/handler/http"
 	"github.com/alexandrovas/go-musthave-metrics/internal/repository"
 	"github.com/alexandrovas/go-musthave-metrics/internal/service"
@@ -21,7 +23,14 @@ import (
 var (
 	_ service.Repository = (*repository.MemStorage)(nil)
 	_ service.Repository = (*repository.PostgresStorage)(nil)
+	_ stateSaver         = (*repository.MemStorage)(nil)
 )
+
+// stateSaver — узкий интерфейс для хранилищ, которым нужна финальная запись
+// состояния при остановке сервера.
+type stateSaver interface {
+	Save() error
+}
 
 // Server — сервер метрик: поднимает хранилище и HTTP-обработчики, слушает порт.
 type Server struct {
@@ -51,23 +60,33 @@ func (s *Server) auditObservers() []audit.Observer {
 }
 
 // Run запускает сервер: инициализирует хранилище, настраивает роутер и слушает
-// адрес из конфигурации до получения сигнала прерывания.
+// адрес из конфигурации до SIGTERM, SIGINT или SIGQUIT. При завершении дожидается
+// HTTP-обработчиков и сохраняет финальное состояние хранилища.
 func (s *Server) Run() error {
+	var cryptoKey *rsa.PrivateKey
+	if s.cfg.CryptoKey != "" {
+		var err error
+		cryptoKey, err = crypto.LoadPrivateKey(s.cfg.CryptoKey)
+		if err != nil {
+			return fmt.Errorf("load decryption key: %w", err)
+		}
+	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(),
+		syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer cancel()
 
 	var wg sync.WaitGroup
 
 	var repo service.Repository
 	if s.cfg.DatabaseDSN == "" {
-		memStore := repository.NewMemStorage(s.logger)
+		memStore := repository.NewMemStorage(s.logger, s.cfg.FileStoragePath)
 
 		if s.cfg.FileStoragePath != "" {
 
 			// Восстановление состояния из файла при старте
 			if s.cfg.RestoreState {
-				if err := memStore.Load(s.cfg.FileStoragePath); err != nil {
+				if err := memStore.Load(); err != nil {
 					return fmt.Errorf("cannot restore state: %w", err)
 				}
 				s.logger.Info("state restored from file", "path", s.cfg.FileStoragePath)
@@ -75,10 +94,10 @@ func (s *Server) Run() error {
 
 			// Настройка сохранения: синхронное (интервал == 0) или периодическое
 			if s.cfg.StoreInterval == 0 {
-				memStore.EnableSyncSave(s.cfg.FileStoragePath)
+				memStore.EnableSyncSave()
 			} else {
 				wg.Go(func() {
-					memStore.RunPeriodicSave(ctx, s.cfg.FileStoragePath, s.cfg.StoreInterval)
+					memStore.RunPeriodicSave(ctx, s.cfg.StoreInterval)
 				})
 			}
 		}
@@ -97,8 +116,11 @@ func (s *Server) Run() error {
 		s.cfg.AuditQueueSize, s.auditObservers()...)
 
 	srv := &http.Server{
-		Addr:    s.cfg.Address,
-		Handler: handlerHttp.NewRouter(repo, s.logger, s.cfg.Key, auditor),
+		Addr: s.cfg.Address,
+		Handler: handlerHttp.NewRouter(repo, s.logger, auditor,
+			handlerHttp.WithHashKey(s.cfg.Key),
+			handlerHttp.WithCryptoKey(cryptoKey),
+		),
 	}
 
 	wg.Go(func() {
@@ -113,6 +135,15 @@ func (s *Server) Run() error {
 	cancel()
 	wg.Wait()
 
+	// Сохраняем финальное состояние после завершения всех HTTP-обработчиков.
+	var saveErr error
+	if saver, ok := repo.(stateSaver); ok {
+		if err := saver.Save(); err != nil {
+			saveErr = fmt.Errorf("save final state: %w", err)
+			s.logger.Error("final save failed", "error", err)
+		}
+	}
+
 	// К этому моменту сервер уже остановлен: Shutdown дождался завершения всех
 	// активных HTTP-обработчиков, значит все синхронные вызовы notifyAudit тоже
 	// завершились. Создаем отдельный контекст с таймаутом 10 сек, чтоб отправить все события
@@ -125,6 +156,9 @@ func (s *Server) Run() error {
 
 	if !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	if saveErr != nil {
+		return saveErr
 	}
 	return nil
 }

@@ -10,8 +10,8 @@ import (
 )
 
 // newPopulatedStorage создаёт хранилище с n gauge- и n counter-метриками.
-func newPopulatedStorage(n int) *MemStorage {
-	s := NewMemStorage(testLogger)
+func newPopulatedStorage(n int, fileStoragePath string) *MemStorage {
+	s := NewMemStorage(testLogger, fileStoragePath)
 	metrics := make([]models.Metrics, 0, 2*n)
 	for i := range n {
 		g := float64(i)
@@ -27,7 +27,7 @@ func newPopulatedStorage(n int) *MemStorage {
 
 func BenchmarkMemStorage_UpdateBatch(b *testing.B) {
 	const n = 1000
-	s := NewMemStorage(testLogger)
+	s := NewMemStorage(testLogger, "")
 	metrics := make([]models.Metrics, n)
 	for i := range n {
 		g := float64(i)
@@ -45,7 +45,7 @@ func BenchmarkMemStorage_UpdateBatch(b *testing.B) {
 }
 
 func BenchmarkMemStorage_Gauges(b *testing.B) {
-	s := newPopulatedStorage(10000)
+	s := newPopulatedStorage(10000, "")
 	ctx := context.Background()
 
 	b.ReportAllocs()
@@ -58,13 +58,13 @@ func BenchmarkMemStorage_Gauges(b *testing.B) {
 }
 
 func BenchmarkMemStorage_Save(b *testing.B) {
-	s := newPopulatedStorage(1000)
 	path := filepath.Join(b.TempDir(), "metrics.json")
+	s := newPopulatedStorage(1000, path)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if err := s.Save(path); err != nil {
+		if err := s.Save(); err != nil {
 			b.Fatal(err)
 		}
 	}

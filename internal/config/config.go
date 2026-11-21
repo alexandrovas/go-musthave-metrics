@@ -58,25 +58,27 @@ type LogConfig struct {
 type ServerConfig struct {
 	Address         string        `koanf:"address"`
 	Log             LogConfig     `koanf:"log"`
-	StoreInterval   time.Duration `koanf:"store-interval"`
-	FileStoragePath string        `koanf:"file-storage-path"`
+	StoreInterval   time.Duration `koanf:"store_interval"`
+	FileStoragePath string        `koanf:"file_storage_path"`
 	RestoreState    bool          `koanf:"restore"`
-	DatabaseDSN     string        `koanf:"database-dsn"`
+	DatabaseDSN     string        `koanf:"database_dsn"`
 	Key             string        `koanf:"key"`
-	AuditFile       string        `koanf:"audit-file"`
-	AuditURL        string        `koanf:"audit-url"`
-	AuditWorkers    int           `koanf:"audit-workers"`
-	AuditQueueSize  int           `koanf:"audit-queue-size"`
+	CryptoKey       string        `koanf:"crypto_key"`
+	AuditFile       string        `koanf:"audit_file"`
+	AuditURL        string        `koanf:"audit_url"`
+	AuditWorkers    int           `koanf:"audit_workers"`
+	AuditQueueSize  int           `koanf:"audit_queue_size"`
 }
 
 // AgentConfig — конфигурация агента сбора метрик.
 type AgentConfig struct {
 	ServerAddress  string        `koanf:"address"`
-	PollInterval   time.Duration `koanf:"poll-interval"`
-	ReportInterval time.Duration `koanf:"report-interval"`
-	RateLimit      uint16        `koanf:"rate-limit"`
+	PollInterval   time.Duration `koanf:"poll_interval"`
+	ReportInterval time.Duration `koanf:"report_interval"`
+	RateLimit      uint16        `koanf:"rate_limit"`
 	Log            LogConfig     `koanf:"log"`
 	Key            string        `koanf:"key"`
+	CryptoKey      string        `koanf:"crypto_key"`
 }
 
 // durationDecodeHook учит mapstructure понимать голые числа как секунды.
@@ -145,17 +147,22 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 	}
 
 	// load from CLI flags
-	if err := k.Load(posflag.Provider(flags, ".", k), nil); err != nil {
+	flagLookup := koanf.New(".")
+	for _, key := range k.Keys() {
+		flagKey := strings.ReplaceAll(key, "_", "-")
+		if err := flagLookup.Set(flagKey, k.Get(key)); err != nil {
+			return fmt.Errorf("prepare config key %s for flags: %w", flagKey, err)
+		}
+	}
+	if err := loadNormalizedKeys(k, posflag.Provider(flags, ".", flagLookup), nil); err != nil {
 		return fmt.Errorf("load config from flags: %w", err)
 	}
 
 	// load from env vars
-	if err := k.Load(env.Provider(".", env.Opt{
+	if err := loadNormalizedKeys(k, env.Provider(".", env.Opt{
 		TransformFunc: func(k, v string) (string, any) {
 			// Transform the key: SERVER__ADDRESS -> server.address
 			k = strings.ReplaceAll(strings.ToLower(k), "__", ".")
-			// Transform the key: SOME_FLAG -> some-flag
-			k = strings.ReplaceAll(strings.ToLower(k), "_", "-")
 			return k, v
 		},
 	}), nil); err != nil {
@@ -175,6 +182,22 @@ func loadInto(configPath string, flags *pflag.FlagSet, out any) error {
 		},
 	}); err != nil {
 		return fmt.Errorf("unmarshall error: %w", err)
+	}
+	return nil
+}
+
+// loadNormalizedKeys загружает источник через koanf, заменяя дефисы в именах
+// ключей на подчёркивания для совместимости с CLI-флагами и env-переменными.
+func loadNormalizedKeys(k *koanf.Koanf, provider koanf.Provider, parser koanf.Parser) error {
+	source := koanf.New(".")
+	if err := source.Load(provider, parser); err != nil {
+		return err
+	}
+	for _, key := range source.Keys() {
+		normalizedKey := strings.ReplaceAll(key, "-", "_")
+		if err := k.Set(normalizedKey, source.Get(key)); err != nil {
+			return fmt.Errorf("set config key %s: %w", normalizedKey, err)
+		}
 	}
 	return nil
 }

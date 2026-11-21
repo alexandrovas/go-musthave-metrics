@@ -58,6 +58,7 @@ func cmd() *cobra.Command {
 	cmd.PersistentFlags().VarP(cmdHelper.NewLogLevelValue(slog.LevelInfo), "log.level", "", "log level (debug, info, warn, error)")
 	cmd.PersistentFlags().VarP(cmdHelper.NewLogFormatValue(config.TextLogFormat), "log.format", "", "log format (text, json)")
 	cmd.PersistentFlags().StringP("key", "k", "", "key for request signing")
+	cmd.PersistentFlags().String("crypto-key", "", "path to RSA public key for encrypting requests")
 
 	return cmd
 }

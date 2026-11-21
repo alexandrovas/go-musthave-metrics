@@ -25,6 +25,19 @@ func writeConfigFile(t *testing.T, content string) string {
 	return path
 }
 
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	oldValue, existed := os.LookupEnv(key)
+	require.NoError(t, os.Unsetenv(key))
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(key, oldValue)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
 func newServerFlagSet() *pflag.FlagSet {
 	fs := pflag.NewFlagSet("server", pflag.ContinueOnError)
 	fs.StringP("address", "a", "localhost:8080", "")
@@ -33,6 +46,7 @@ func newServerFlagSet() *pflag.FlagSet {
 	fs.BoolP("restore", "r", false, "")
 	fs.StringP("database-dsn", "d", "", "")
 	fs.StringP("key", "k", "", "")
+	fs.String("crypto-key", "", "")
 	fs.StringP("audit-file", "", "", "")
 	fs.StringP("audit-url", "", "", "")
 	fs.IntP("audit-workers", "", 4, "")
@@ -51,6 +65,7 @@ func newAgentFlagSet() *pflag.FlagSet {
 	fs.StringP("log.level", "", "info", "")
 	fs.StringP("log.format", "", "text", "")
 	fs.StringP("key", "k", "", "")
+	fs.String("crypto-key", "", "")
 	return fs
 }
 
@@ -160,6 +175,7 @@ func TestLoadServerConfig_FromFlags(t *testing.T) {
 	require.NoError(t, fs.Set("restore", "true"))
 	require.NoError(t, fs.Set("database-dsn", "postgres://flag"))
 	require.NoError(t, fs.Set("key", "flag-key"))
+	require.NoError(t, fs.Set("crypto-key", "/tmp/flag-public.pem"))
 	require.NoError(t, fs.Set("log.level", "warn"))
 	require.NoError(t, fs.Set("log.format", "json"))
 	require.NoError(t, fs.Set("audit-workers", "8"))
@@ -174,24 +190,26 @@ func TestLoadServerConfig_FromFlags(t *testing.T) {
 	assert.True(t, cfg.RestoreState)
 	assert.Equal(t, "postgres://flag", cfg.DatabaseDSN)
 	assert.Equal(t, "flag-key", cfg.Key)
+	assert.Equal(t, "/tmp/flag-public.pem", cfg.CryptoKey)
 	assert.Equal(t, slog.LevelWarn, cfg.Log.Level)
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
 	assert.Equal(t, 8, cfg.AuditWorkers)
 	assert.Equal(t, 128, cfg.AuditQueueSize)
 }
 
-func TestLoadServerConfig_FromFile(t *testing.T) {
+func TestLoadServerConfig_FromYAMLFile(t *testing.T) {
 	path := writeConfigFile(t, `
 address: "file-host:8080"
-store-interval: "30"
-file-storage-path: "/tmp/file-metrics.json"
+store_interval: "30"
+file_storage_path: "/tmp/file-metrics.json"
 restore: "true"
-database-dsn: "postgres://file"
+database_dsn: "postgres://file"
 key: "file-key"
-audit-file: "/tmp/audit.log"
-audit-url: "http://audit.example.com"
-audit-workers: 2
-audit-queue-size: 16
+crypto_key: "/tmp/file-private.pem"
+audit_file: "/tmp/audit.log"
+audit_url: "http://audit.example.com"
+audit_workers: 2
+audit_queue_size: 16
 log:
   level: "debug"
   format: "json"
@@ -206,6 +224,7 @@ log:
 	assert.True(t, cfg.RestoreState)
 	assert.Equal(t, "postgres://file", cfg.DatabaseDSN)
 	assert.Equal(t, "file-key", cfg.Key)
+	assert.Equal(t, "/tmp/file-private.pem", cfg.CryptoKey)
 	assert.Equal(t, "/tmp/audit.log", cfg.AuditFile)
 	assert.Equal(t, "http://audit.example.com", cfg.AuditURL)
 	assert.Equal(t, 2, cfg.AuditWorkers)
@@ -214,8 +233,65 @@ log:
 	assert.Equal(t, JSONLogFormat, cfg.Log.Format)
 }
 
+func TestLoadServerConfig_FileValueIsNotOverriddenByUnsetFlag(t *testing.T) {
+	path := writeConfigFile(t, `store_interval: "45s"`)
+	flags := newServerFlagSet()
+
+	cfg, err := LoadServerConfig(path, flags)
+	require.NoError(t, err)
+	assert.Equal(t, 45*time.Second, cfg.StoreInterval)
+
+	require.NoError(t, flags.Set("store-interval", "90s"))
+	cfg, err = LoadServerConfig(path, flags)
+	require.NoError(t, err)
+	assert.Equal(t, 90*time.Second, cfg.StoreInterval)
+}
+
+func TestLoadServerConfig_FileValueIsNotOverriddenByUnsetEnv(t *testing.T) {
+	unsetEnv(t, "STORE_INTERVAL")
+	path := writeConfigFile(t, `store_interval: "45s"`)
+
+	cfg, err := LoadServerConfig(path, newServerFlagSet())
+	require.NoError(t, err)
+	assert.Equal(t, 45*time.Second, cfg.StoreInterval)
+}
+
+func TestLoadServerConfig_EnvOverridesFileAndFlag(t *testing.T) {
+	path := writeConfigFile(t, `store_interval: "45s"`)
+	flags := newServerFlagSet()
+	require.NoError(t, flags.Set("store-interval", "60s"))
+	t.Setenv("STORE_INTERVAL", "90s")
+
+	cfg, err := LoadServerConfig(path, flags)
+	require.NoError(t, err)
+	assert.Equal(t, 90*time.Second, cfg.StoreInterval)
+}
+
+func TestLoadServerConfig_FromJSONFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	content := `{
+		"address": "localhost:8080",
+		"restore": true,
+		"store_interval": "1s",
+		"file_storage_path": "/path/to/file.db",
+		"database_dsn": "",
+		"crypto_key": "/path/to/key.pem"
+	}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	cfg, err := LoadServerConfig(path, newServerFlagSet())
+	require.NoError(t, err)
+	assert.Equal(t, "localhost:8080", cfg.Address)
+	assert.True(t, cfg.RestoreState)
+	assert.Equal(t, 1*time.Second, cfg.StoreInterval)
+	assert.Equal(t, "/path/to/file.db", cfg.FileStoragePath)
+	assert.Equal(t, "", cfg.DatabaseDSN)
+	assert.Equal(t, "/path/to/key.pem", cfg.CryptoKey)
+}
+
 func TestLoadServerConfig_EnvOverridesFlag(t *testing.T) {
 	t.Setenv("ADDRESS", "env-host:8080")
+	t.Setenv("CRYPTO_KEY", "/tmp/env-private.pem")
 
 	fs := newServerFlagSet()
 	require.NoError(t, fs.Set("address", "flag-host:9090"))
@@ -223,6 +299,15 @@ func TestLoadServerConfig_EnvOverridesFlag(t *testing.T) {
 	cfg, err := LoadServerConfig(missingConfigPath(t), fs)
 	require.NoError(t, err)
 	assert.Equal(t, "env-host:8080", cfg.Address)
+	assert.Equal(t, "/tmp/env-private.pem", cfg.CryptoKey)
+}
+
+func TestLoadAgentConfig_CryptoKeyFromEnv(t *testing.T) {
+	t.Setenv("CRYPTO_KEY", "/tmp/env-public.pem")
+
+	cfg, err := LoadAgentConfig(missingConfigPath(t), newAgentFlagSet())
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/env-public.pem", cfg.CryptoKey)
 }
 
 func TestLoadServerConfig_EnvBareNumberDuration(t *testing.T) {
@@ -240,6 +325,7 @@ func TestLoadAgentConfig_FromFlags(t *testing.T) {
 	require.NoError(t, fs.Set("report-interval", "15s"))
 	require.NoError(t, fs.Set("rate-limit", "7"))
 	require.NoError(t, fs.Set("key", "agent-key"))
+	require.NoError(t, fs.Set("crypto-key", "/tmp/agent-public.pem"))
 	require.NoError(t, fs.Set("log.level", "error"))
 	require.NoError(t, fs.Set("log.format", "text"))
 
@@ -251,6 +337,7 @@ func TestLoadAgentConfig_FromFlags(t *testing.T) {
 	assert.Equal(t, 15*time.Second, cfg.ReportInterval)
 	assert.Equal(t, uint16(7), cfg.RateLimit)
 	assert.Equal(t, "agent-key", cfg.Key)
+	assert.Equal(t, "/tmp/agent-public.pem", cfg.CryptoKey)
 	assert.Equal(t, slog.LevelError, cfg.Log.Level)
 	assert.Equal(t, TextLogFormat, cfg.Log.Format)
 }

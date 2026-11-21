@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,26 +12,23 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/alexandrovas/go-musthave-metrics/internal/collectors"
 	"github.com/alexandrovas/go-musthave-metrics/internal/config"
+	"github.com/alexandrovas/go-musthave-metrics/internal/crypto"
 	"github.com/alexandrovas/go-musthave-metrics/internal/models"
 	"github.com/alexandrovas/go-musthave-metrics/internal/pool"
 	"github.com/alexandrovas/go-musthave-metrics/internal/retry"
 	"github.com/alexandrovas/go-musthave-metrics/internal/sign"
 )
 
-// job — единица работы воркера: батч метрик, собранный за один цикл report.
-// deadline общий для всех job, отправленных в рамках одного цикла report — это
-// ограничивает суммарное время, которое агент готов потратить на доставку
-// метрик этого цикла (включая все ретраи).
+// job — единица работы воркера: пакет метрик, поставленный в очередь на отправку.
 type job struct {
-	metrics  []collectors.PendingMetric
-	deadline time.Time
+	metrics []collectors.PendingMetric
 }
 
 // collector — общий интерфейс коллектора
@@ -58,6 +56,7 @@ type Agent struct {
 	retryIntervals []time.Duration
 	buffersPool    *pool.Pool[*bytes.Buffer] // переиспользуемые буферы JSON и gzip
 	buffersOnce    sync.Once                 // синхронизирует ленивую инициализацию пула
+	cryptoKey      *rsa.PublicKey
 }
 
 // New создаёт агента с коллекторами runtime- и системных метрик.
@@ -87,40 +86,64 @@ func (a *Agent) buffers() *pool.Pool[*bytes.Buffer] {
 	return a.buffersPool
 }
 
-// Run запускает циклы опроса метрик и их отправки на сервер до получения
-// сигнала прерывания.
+// Run запускает сбор и отправку метрик до SIGTERM, SIGINT или SIGQUIT. При
+// завершении останавливает опрос, отправляет финальный снимок и дожидается
+// отправки всех заданий из очереди.
 func (a *Agent) Run() error {
-	ctx := context.Background()
+	if err := a.loadCryptoKey(); err != nil {
+		return err
+	}
 
 	a.logger.Info("Agent is running", "server", a.cfg.ServerAddress, "rate_limit", a.cfg.RateLimit)
 
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(),
+		syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
 	defer cancel()
 
-	var wg sync.WaitGroup
+	var workersWG sync.WaitGroup
+	var runWG sync.WaitGroup
 
 	// run multiple workers to push metrics; их количество ограничивает число
 	// одновременно исходящих запросов на сервер сверху (rate limit).
 	a.logger.Info("Start push workers", "count", a.cfg.RateLimit)
 	for idx := range a.cfg.RateLimit {
-		wg.Go(func() {
-			a.runWorker(ctx, idx)
+		workersWG.Go(func() {
+			a.runWorker(context.Background(), idx)
 		})
 	}
 
 	// run report metrics goroutine
-	wg.Go(func() {
+	runWG.Go(func() {
 		a.runReporting(ctx)
 	})
 
 	// run poll metrics goroutine — внутри запускает по горутине на каждый
 	// коллектор.
-	wg.Go(func() {
+	runWG.Go(func() {
 		a.runPolling(ctx)
 	})
 
-	wg.Wait()
+	<-ctx.Done()
+	runWG.Wait()
+
+	// Забираем последний снимок после остановки опроса и отчётности.
+	a.report(context.Background())
+	close(a.jobs)
+	workersWG.Wait()
+
 	a.logger.Info("Agent stopped")
+	return nil
+}
+
+func (a *Agent) loadCryptoKey() error {
+	if a.cfg.CryptoKey == "" {
+		return nil
+	}
+	key, err := crypto.LoadPublicKey(a.cfg.CryptoKey)
+	if err != nil {
+		return err
+	}
+	a.cryptoKey = key
 	return nil
 }
 
@@ -172,14 +195,11 @@ func (a *Agent) runWorker(ctx context.Context, idx uint16) {
 				return
 			}
 
-			sendCtx, cancel := context.WithDeadline(ctx, j.deadline)
-			defer cancel()
-
 			metrics := make([]models.Metrics, len(j.metrics))
 			for i, m := range j.metrics {
 				metrics[i] = m.Metric
 			}
-			if err := a.sendMetricsBatch(sendCtx, metrics); err != nil {
+			if err := a.sendMetricsBatch(ctx, metrics); err != nil {
 				log.Error("send metrics batch", "error", err)
 				for _, pm := range j.metrics {
 					pm.Restore()
@@ -214,16 +234,9 @@ func (a *Agent) report(ctx context.Context) {
 		return
 	}
 
-	// Используем ReportInterval как deadline
-	// на отправку одного полного списка метрик.
-	// Если отправка метрик за отведенное время не удалась, то отменяем
-	// отправку и начинаем новый цикл.
-	deadline := time.Now().Add(a.cfg.ReportInterval)
-
 	select {
 	case a.jobs <- job{
-		metrics:  pendingMetrics,
-		deadline: deadline,
+		metrics: pendingMetrics,
 	}:
 	case <-ctx.Done():
 		// restore all metrics state
@@ -264,6 +277,13 @@ func (a *Agent) sendData(ctx context.Context, url string, data []byte) error {
 		return fmt.Errorf("gzip close error: %w", err)
 	}
 	body := compressed.Bytes()
+	if a.cryptoKey != nil {
+		var err error
+		body, err = crypto.Encrypt(a.cryptoKey, body)
+		if err != nil {
+			return fmt.Errorf("encrypt request body: %w", err)
+		}
+	}
 
 	// Хеш считается от исходных (несжатых) данных — именно их сервер увидит
 	// после декомпрессии тела запроса.
