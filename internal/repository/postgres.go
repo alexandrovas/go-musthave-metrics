@@ -59,11 +59,6 @@ func (s *PostgresStorage) Close() {
 	s.db.Close()
 }
 
-// Save для PostgreSQL не требуется: изменения фиксируются в базе данных сразу.
-func (s *PostgresStorage) Save() error {
-	return nil
-}
-
 // isRetriableDBError сообщает, стоит ли повторить операцию с БД
 func isRetriableDBError(err error) bool {
 	if err == nil {

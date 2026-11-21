@@ -20,7 +20,6 @@ type Repository interface {
 	Gauges(ctx context.Context) (map[string]float64, error)
 	Counters(ctx context.Context) (map[string]int64, error)
 	UpdateBatch(ctx context.Context, metric []models.Metrics) error
-	Save() error
 	Ping(ctx context.Context) error
 }
 

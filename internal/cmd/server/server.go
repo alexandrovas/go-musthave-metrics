@@ -23,7 +23,14 @@ import (
 var (
 	_ service.Repository = (*repository.MemStorage)(nil)
 	_ service.Repository = (*repository.PostgresStorage)(nil)
+	_ stateSaver         = (*repository.MemStorage)(nil)
 )
+
+// stateSaver — узкий интерфейс для хранилищ, которым нужна финальная запись
+// состояния при остановке сервера.
+type stateSaver interface {
+	Save() error
+}
 
 // Server — сервер метрик: поднимает хранилище и HTTP-обработчики, слушает порт.
 type Server struct {
@@ -130,9 +137,11 @@ func (s *Server) Run() error {
 
 	// Сохраняем финальное состояние после завершения всех HTTP-обработчиков.
 	var saveErr error
-	if err := repo.Save(); err != nil {
-		saveErr = fmt.Errorf("save final state: %w", err)
-		s.logger.Error("final save failed", "error", err)
+	if saver, ok := repo.(stateSaver); ok {
+		if err := saver.Save(); err != nil {
+			saveErr = fmt.Errorf("save final state: %w", err)
+			s.logger.Error("final save failed", "error", err)
+		}
 	}
 
 	// К этому моменту сервер уже остановлен: Shutdown дождался завершения всех

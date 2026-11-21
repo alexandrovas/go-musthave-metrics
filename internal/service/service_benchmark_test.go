@@ -33,7 +33,6 @@ func (r *benchRepo) Counters(context.Context) (map[string]int64, error) {
 	return r.counters, nil
 }
 func (r *benchRepo) UpdateBatch(context.Context, []models.Metrics) error { return nil }
-func (r *benchRepo) Save() error                                         { return nil }
 func (r *benchRepo) Ping(context.Context) error                          { return nil }
 
 // getAllMetricsSink удерживает результат последней итерации, чтобы профиль
