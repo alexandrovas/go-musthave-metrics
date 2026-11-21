@@ -517,18 +517,36 @@ func TestSendMetricsBatchEncryptsWhenCryptoKeyConfigured(t *testing.T) {
 		Type: "PUBLIC KEY", Bytes: publicDER,
 	}), 0o600))
 
-	var got []models.Metrics
+	type handlerResult struct {
+		metrics []models.Metrics
+		err     error
+	}
+	results := make(chan handlerResult, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, readErr := io.ReadAll(r.Body)
-		require.NoError(t, readErr)
-		body, readErr = crypto.Decrypt(privateKey, body)
-		require.NoError(t, readErr)
-		zr, gzipErr := gzip.NewReader(bytes.NewReader(body))
-		require.NoError(t, gzipErr)
-		defer zr.Close()
-		body, readErr = io.ReadAll(zr)
-		require.NoError(t, readErr)
-		require.NoError(t, json.Unmarshal(body, &got))
+		result := handlerResult{}
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			body, err = crypto.Decrypt(privateKey, body)
+		}
+		if err == nil {
+			var zr *gzip.Reader
+			zr, err = gzip.NewReader(bytes.NewReader(body))
+			if err == nil {
+				body, err = io.ReadAll(zr)
+				if closeErr := zr.Close(); err == nil {
+					err = closeErr
+				}
+			}
+		}
+		if err == nil {
+			err = json.Unmarshal(body, &result.metrics)
+		}
+		result.err = err
+		results <- result
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -542,6 +560,9 @@ func TestSendMetricsBatchEncryptsWhenCryptoKeyConfigured(t *testing.T) {
 	// В тесте отправка вызывается напрямую, без Run(), который загружает ключ при старте.
 	require.NoError(t, a.loadCryptoKey())
 	want := []models.Metrics{{ID: "PollCount", MType: models.Counter, Delta: ptr(int64(5))}}
-	require.NoError(t, a.sendMetricsBatch(t.Context(), want))
-	require.Equal(t, want, got)
+	sendErr := a.sendMetricsBatch(t.Context(), want)
+	result := <-results
+	require.NoError(t, result.err)
+	require.NoError(t, sendErr)
+	require.Equal(t, want, result.metrics)
 }
