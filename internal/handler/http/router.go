@@ -31,18 +31,18 @@ type routerOptions struct {
 	cryptoKey *rsa.PrivateKey
 }
 
-// OptionFunc задаёт дополнительную настройку HTTP-роутера.
-type OptionFunc func(*routerOptions)
+// Option задаёт дополнительную настройку HTTP-роутера.
+type Option func(*routerOptions)
 
 // WithHashKey включает проверку подписи входящих запросов и подпись ответов.
-func WithHashKey(key string) OptionFunc {
+func WithHashKey(key string) Option {
 	return func(options *routerOptions) {
 		options.hashKey = key
 	}
 }
 
 // WithCryptoKey задаёт закрытый RSA-ключ для расшифровки входящих запросов.
-func WithCryptoKey(key *rsa.PrivateKey) OptionFunc {
+func WithCryptoKey(key *rsa.PrivateKey) Option {
 	return func(options *routerOptions) {
 		options.cryptoKey = key
 	}
@@ -50,7 +50,7 @@ func WithCryptoKey(key *rsa.PrivateKey) OptionFunc {
 
 // NewRouter собирает chi-роутер со всеми эндпоинтами сервера метрик и
 // middleware (логирование, сжатие, опционально подпись и проверка хеша).
-func NewRouter(repo service.Repository, logger *slog.Logger, auditor *audit.Dispatcher, opts ...OptionFunc) http.Handler {
+func NewRouter(repo service.Repository, logger *slog.Logger, auditor *audit.Dispatcher, opts ...Option) http.Handler {
 	options := routerOptions{}
 	for _, optFunc := range opts {
 		if optFunc != nil {
